@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, Clock, Factory, Package, TrendingUp } from "lucide-react";
 import { requireTenantContext } from "@/lib/auth/session";
-import { prisma } from "@/lib/db";
+import { prisma } from "@/lib/prisma";
 import { loadPlantScope } from "@/lib/plants/access";
 import { plantIdsForQuery } from "@/lib/plants/scope";
 import { addUtcDays, formatDateOnly, parseDateOnly } from "@/lib/orders/date-rules";
@@ -57,9 +57,8 @@ function KpiCard(props: {
 
   return (
     <div
-      className={`min-w-[140px] flex-1 rounded border border-line border-l-[3px] bg-panel p-4 ${toneBorder} ${
-        props.active ? "ring-2 ring-ring" : ""
-      }`}
+      className={`min-w-[140px] flex-1 rounded border border-line border-l-[3px] bg-panel p-4 ${toneBorder} ${props.active ? "ring-2 ring-ring" : ""
+        }`}
     >
       <Link href={props.href} className="block">
         <div className="mb-2 flex items-start justify-between gap-2">
@@ -244,15 +243,15 @@ export default async function DashboardPage({
     orderIds.length === 0
       ? Promise.resolve([])
       : prisma.productionEntry.findMany({
-          where: { organizationId: context.organizationId, productionOrderId: { in: orderIds } },
-          select: {
-            productionOrderId: true,
-            orderProcessId: true,
-            quantity: true,
-            entryDate: true,
-          },
-          orderBy: [{ entryDate: "asc" }, { createdAt: "asc" }],
-        }),
+        where: { organizationId: context.organizationId, productionOrderId: { in: orderIds } },
+        select: {
+          productionOrderId: true,
+          orderProcessId: true,
+          quantity: true,
+          entryDate: true,
+        },
+        orderBy: [{ entryDate: "asc" }, { createdAt: "asc" }],
+      }),
     prisma.process.findMany({
       where: { organizationId: context.organizationId },
       select: { id: true, unitsPerDay: true },
