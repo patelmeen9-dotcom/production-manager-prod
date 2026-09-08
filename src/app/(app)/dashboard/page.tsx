@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, Clock, Factory, Package, TrendingUp } from "lucide-react";
 import { requireTenantContext } from "@/lib/auth/session";
-import { prisma } from "@/lib/prisma";
+import { prisma } from "@/lib/db";
 import { loadPlantScope } from "@/lib/plants/access";
 import { plantIdsForQuery } from "@/lib/plants/scope";
 import { addUtcDays, formatDateOnly, parseDateOnly } from "@/lib/orders/date-rules";
