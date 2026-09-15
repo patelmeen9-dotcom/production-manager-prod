@@ -1,5 +1,5 @@
 import { formatCategoryDetail, formatOrderLineLabel } from "@/lib/orders/line-label";
-import type { EntryLineOption } from "@/components/production/production-entry-form";
+import type { EntryLineOption, OrderMaterial } from "@/components/production/production-entry-form";
 
 type LineWithCategories = {
   id: string;
@@ -15,6 +15,12 @@ type LineWithCategories = {
     sequence: number;
     processName: string;
   }[];
+};
+
+type MaterialForEntry = {
+  id: string;
+  name: string;
+  totalQuantity: number;
 };
 
 export function buildEntryLinesByOrder(
@@ -35,6 +41,25 @@ export function buildEntryLinesByOrder(
           value: `process:${process.id}`,
           label: `${process.sequence}. ${process.processName}`,
         })),
+      })),
+    ]),
+  );
+}
+
+export function buildMaterialsByOrder(
+  orders: {
+    id: string;
+    /** All materials across all lines (order-level; stored on first line). */
+    materials: MaterialForEntry[];
+  }[],
+): Record<string, OrderMaterial[]> {
+  return Object.fromEntries(
+    orders.map((order) => [
+      order.id,
+      order.materials.map((mat) => ({
+        id: mat.id,
+        name: mat.name,
+        totalQuantity: mat.totalQuantity,
       })),
     ]),
   );

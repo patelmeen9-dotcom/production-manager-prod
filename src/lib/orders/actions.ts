@@ -10,7 +10,7 @@ import { requireGrantedPlant } from "@/lib/plants/access";
 import { parseDateOnly, resolveDueDate, resolveEffectiveStartDate } from "@/lib/orders/date-rules";
 import { writeAuditLog } from "@/lib/audit/write";
 import {
-  orderLineMatrixEditSchema,
+  orderLineQuantityEditSchema,
   productionOrderSafeEditSchema,
   productionOrderSchema,
 } from "@/lib/validation/orders";
@@ -55,11 +55,9 @@ async function writeLineDetails(
     }[];
     materials: {
       name: string;
-      quantityPerUnit: number;
+      totalQuantity: number;
       quantityReceived: number;
-      processCodes: string[];
     }[];
-    processRows: { id: string; processCode: string }[];
   },
 ) {
   for (const selection of input.categorySelections) {
@@ -82,26 +80,15 @@ async function writeLineDetails(
   }
 
   for (const material of input.materials) {
-    const createdMaterial = await tx.productionOrderLineMaterial.create({
+    await tx.productionOrderLineMaterial.create({
       data: {
         organizationId: input.organizationId,
         productionOrderLineId: input.lineId,
         name: material.name.trim(),
-        quantityPerUnit: material.quantityPerUnit,
+        totalQuantity: material.totalQuantity,
         quantityReceived: material.quantityReceived,
       },
     });
-    const stageIds = material.processCodes
-      .map((code) => input.processRows.find((row) => row.processCode === code)?.id)
-      .filter((id): id is string => Boolean(id));
-    if (stageIds.length > 0) {
-      await tx.productionOrderLineMaterialStage.createMany({
-        data: stageIds.map((orderProcessId) => ({
-          materialId: createdMaterial.id,
-          orderProcessId,
-        })),
-      });
-    }
   }
 }
 
@@ -113,6 +100,17 @@ export async function createProductionOrderAction(_prev: FormState, formData: Fo
     const lines = parseLinesJson(formData);
     if (!lines) {
       return { error: "Invalid order lines payload." };
+    }
+    // Parse order-level materials (separate from lines)
+    let orderMaterials: { name: string; totalQuantity: number; quantityReceived: number }[] = [];
+    try {
+      const raw = String(formData.get("materialsJson") ?? "[]");
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        orderMaterials = parsed;
+      }
+    } catch {
+      // ignore parse errors; materials are optional
     }
     const parsed = productionOrderSchema.safeParse({
       clientId: formData.get("clientId"),
@@ -155,12 +153,12 @@ export async function createProductionOrderAction(_prev: FormState, formData: Fo
       }),
       parsed.data.specialActivityIds.length > 0
         ? prisma.specialActivity.findMany({
-            where: {
-              organizationId: context.organizationId,
-              isActive: true,
-              id: { in: parsed.data.specialActivityIds },
-            },
-          })
+          where: {
+            organizationId: context.organizationId,
+            isActive: true,
+            id: { in: parsed.data.specialActivityIds },
+          },
+        })
         : Promise.resolve([]),
     ]);
 
@@ -272,9 +270,25 @@ export async function createProductionOrderAction(_prev: FormState, formData: Fo
           organizationId: context.organizationId,
           lineId: createdLine.id,
           categorySelections: line.categorySelections,
-          materials: line.materials,
-          processRows,
+          // Per-line materials payload is empty; order-level materials are written to first line below
+          materials: [],
         });
+
+        // Attach order-level materials to the first line
+        if (index === 0 && orderMaterials.length > 0) {
+          for (const material of orderMaterials) {
+            if (!material.name?.trim() || !material.totalQuantity || material.totalQuantity <= 0) continue;
+            await tx.productionOrderLineMaterial.create({
+              data: {
+                organizationId: context.organizationId,
+                productionOrderLineId: createdLine.id,
+                name: material.name.trim(),
+                totalQuantity: material.totalQuantity,
+                quantityReceived: material.quantityReceived ?? 0,
+              },
+            });
+          }
+        }
       }
 
       if (activities.length > 0) {
@@ -420,34 +434,12 @@ export async function updateProductionOrderSafeAction(
   redirectAfterSave(`/orders/${orderId}`, successMessage);
 }
 
-function lineCategoryIdsFromSelections(selections: { productCategoryId: string }[]): string[] {
-  const ids: string[] = [];
-  for (const selection of selections) {
-    if (!ids.includes(selection.productCategoryId)) {
-      ids.push(selection.productCategoryId);
-    }
-  }
-  return ids;
-}
-
-function ownedMatrixKey(
-  productId: string,
-  mappedCategoryIds: Set<string>,
-  selectionIds: string[],
-): string | null {
-  if (selectionIds.length > 1) {
-    return null;
-  }
-  if (selectionIds.length === 1) {
-    return `${productId}:${selectionIds[0]}`;
-  }
-  if (mappedCategoryIds.size === 0) {
-    return `${productId}:`;
-  }
-  return null;
-}
-
-export async function updateOrderLineMatrixAction(
+/**
+ * Update the quantity of one or more existing order lines. Categories are descriptive
+ * attributes set at creation time and are not editable here — only the quantity per
+ * line changes. Lines are never created, merged, or deleted by this action.
+ */
+export async function updateOrderLineQuantitiesAction(
   orderId: string,
   _prev: FormState,
   formData: FormData,
@@ -455,32 +447,22 @@ export async function updateOrderLineMatrixAction(
   let successMessage = "";
   try {
     const context = await requireMasterWriter();
-    let cellsRaw: unknown;
+    let linesRaw: unknown;
     try {
-      cellsRaw = JSON.parse(String(formData.get("matrixJson") ?? "[]"));
+      linesRaw = JSON.parse(String(formData.get("linesJson") ?? "[]"));
     } catch {
-      return { error: "Invalid quantity matrix payload." };
+      return { error: "Invalid quantities payload." };
     }
-    const parsed = orderLineMatrixEditSchema.safeParse({ cells: cellsRaw });
+    const parsed = orderLineQuantityEditSchema.safeParse({ lines: linesRaw });
     if (!parsed.success) {
-      return { error: parsed.error.issues[0]?.message ?? "Invalid quantity matrix." };
+      return { error: parsed.error.issues[0]?.message ?? "Invalid quantities." };
     }
 
     const order = await prisma.productionOrder.findFirst({
       where: { id: orderId, organizationId: context.organizationId },
       include: {
         productionEntries: { take: 1, select: { id: true } },
-        lines: {
-          include: {
-            product: { include: { categoryAssignments: { select: { productCategoryId: true } } } },
-            categorySelections: { select: { productCategoryId: true } },
-            processes: { orderBy: { sequence: "asc" as const } },
-            materials: {
-              include: { stages: { include: { orderProcess: { select: { processCode: true } } } } },
-            },
-          },
-          orderBy: { lineNumber: "asc" },
-        },
+        lines: { select: { id: true, productId: true }, orderBy: { lineNumber: "asc" } },
       },
     });
     if (!order) {
@@ -494,171 +476,36 @@ export async function updateOrderLineMatrixAction(
       return { error: "This order has no lines to update." };
     }
 
-    const mappedByProduct = new Map<string, Set<string>>();
-    const linesByKey = new Map<string, typeof order.lines>();
-    for (const line of order.lines) {
-      const mapped = mappedByProduct.get(line.productId) ?? new Set<string>();
-      for (const assignment of line.product.categoryAssignments) {
-        mapped.add(assignment.productCategoryId);
+    const orderLineIds = new Set(order.lines.map((line) => line.id));
+    const submittedIds = new Set<string>();
+    for (const line of parsed.data.lines) {
+      if (!orderLineIds.has(line.lineId)) {
+        return { error: "A submitted line does not belong to this order." };
       }
-      mappedByProduct.set(line.productId, mapped);
+      if (submittedIds.has(line.lineId)) {
+        return { error: "Duplicate line in quantity update." };
+      }
+      submittedIds.add(line.lineId);
     }
-    for (const line of order.lines) {
-      const mapped = mappedByProduct.get(line.productId) ?? new Set<string>();
-      const key = ownedMatrixKey(
-        line.productId,
-        mapped,
-        lineCategoryIdsFromSelections(line.categorySelections),
-      );
-      if (!key) {
-        continue;
-      }
-      const list = linesByKey.get(key) ?? [];
-      list.push(line);
-      linesByKey.set(key, list);
-    }
-
-    const submittedKeys = new Set<string>();
-    for (const cell of parsed.data.cells) {
-      const mapped = mappedByProduct.get(cell.productId);
-      if (!mapped) {
-        return { error: "A submitted product is not on this order." };
-      }
-      if (cell.categoryId) {
-        if (!mapped.has(cell.categoryId)) {
-          return { error: "A submitted category is not mapped to that product." };
-        }
-      } else if (mapped.size > 0) {
-        return { error: "Uncategorized quantity is only allowed for products with no mapped categories." };
-      }
-      const key = `${cell.productId}:${cell.categoryId ?? ""}`;
-      if (submittedKeys.has(key)) {
-        return { error: "Duplicate product and category quantity." };
-      }
-      submittedKeys.add(key);
-    }
-
-    const positiveCells = parsed.data.cells.filter((cell) => cell.quantity > 0);
-    const leftoverCount = order.lines.filter((line) => {
-      const mapped = mappedByProduct.get(line.productId) ?? new Set<string>();
-      return (
-        ownedMatrixKey(line.productId, mapped, lineCategoryIdsFromSelections(line.categorySelections)) ==
-        null
-      );
-    }).length;
-    if (positiveCells.length === 0 && leftoverCount === 0) {
-      return { error: "Total order quantity must be greater than zero." };
+    if (submittedIds.size !== orderLineIds.size) {
+      return { error: "All order lines must have a quantity." };
     }
 
     await prisma.$transaction(async (tx) => {
-      let nextTempLineNumber = 100_000;
-      for (const cell of parsed.data.cells) {
-        const key = `${cell.productId}:${cell.categoryId ?? ""}`;
-        const existing = linesByKey.get(key) ?? [];
-        if (cell.quantity <= 0) {
-          if (existing.length > 0) {
-            await tx.productionOrderLine.deleteMany({
-              where: { id: { in: existing.map((line) => line.id) } },
-            });
-          }
-          continue;
-        }
-
-        const keep = existing[0];
-        if (keep) {
-          await tx.productionOrderLine.update({
-            where: { id: keep.id },
-            data: { quantity: cell.quantity },
-          });
-          await tx.productionOrderProcess.updateMany({
-            where: { productionOrderLineId: keep.id },
-            data: { plannedQuantity: cell.quantity },
-          });
-          if (existing.length > 1) {
-            await tx.productionOrderLine.deleteMany({
-              where: { id: { in: existing.slice(1).map((line) => line.id) } },
-            });
-          }
-          continue;
-        }
-
-        const template = order.lines.find((line) => line.productId === cell.productId);
-        if (!template || template.processes.length === 0) {
-          throw new AppError(
-            "VALIDATION",
-            "Cannot add a quantity cell without an existing process snapshot for that product.",
-            400,
-          );
-        }
-        const createdLine = await tx.productionOrderLine.create({
-          data: {
-            organizationId: order.organizationId,
-            productionOrderId: order.id,
-            productId: cell.productId,
-            quantity: cell.quantity,
-            remarks: template.remarks,
-            lineNumber: nextTempLineNumber++,
-          },
-        });
-        const processRows = [];
-        for (const process of template.processes) {
-          const row = await tx.productionOrderProcess.create({
-            data: {
-              organizationId: order.organizationId,
-              productionOrderId: order.id,
-              productionOrderLineId: createdLine.id,
-              processId: process.processId,
-              processName: process.processName,
-              processCode: process.processCode,
-              sequence: process.sequence,
-              plannedQuantity: cell.quantity,
-              expectedDays: process.expectedDays,
-            },
-          });
-          processRows.push(row);
-        }
-        await writeLineDetails(tx, {
-          organizationId: order.organizationId,
-          lineId: createdLine.id,
-          categorySelections: cell.categoryId
-            ? [{ productCategoryId: cell.categoryId, textValue: "", optionIds: [] }]
-            : [],
-          materials: template.materials.map((material) => ({
-            name: material.name,
-            quantityPerUnit: material.quantityPerUnit,
-            quantityReceived: material.quantityReceived,
-            processCodes: material.stages.map((stage) => stage.orderProcess.processCode),
-          })),
-          processRows,
-        });
-      }
-
-      const remaining = await tx.productionOrderLine.findMany({
-        where: { productionOrderId: order.id },
-        orderBy: { lineNumber: "asc" },
-      });
-      if (remaining.length === 0) {
-        throw new AppError("VALIDATION", "Total order quantity must be greater than zero.", 400);
-      }
-      for (const [index, line] of remaining.entries()) {
+      for (const line of parsed.data.lines) {
         await tx.productionOrderLine.update({
-          where: { id: line.id },
-          data: { lineNumber: 20_000 + index },
+          where: { id: line.lineId },
+          data: { quantity: line.quantity },
+        });
+        await tx.productionOrderProcess.updateMany({
+          where: { productionOrderLineId: line.lineId },
+          data: { plannedQuantity: line.quantity },
         });
       }
-      for (const [index, line] of remaining.entries()) {
-        await tx.productionOrderLine.update({
-          where: { id: line.id },
-          data: { lineNumber: index + 1 },
-        });
-      }
-      const totalQuantity = remaining.reduce((sum, line) => sum + line.quantity, 0);
+      const totalQuantity = parsed.data.lines.reduce((sum, line) => sum + line.quantity, 0);
       await tx.productionOrder.update({
         where: { id: order.id },
-        data: {
-          quantity: totalQuantity,
-          productId: remaining[0]!.productId,
-        },
+        data: { quantity: totalQuantity },
       });
     });
 
@@ -670,7 +517,7 @@ export async function updateOrderLineMatrixAction(
       action: "UPDATE",
       entityType: "ProductionOrder",
       entityId: order.id,
-      newValue: { matrixQuantityUpdate: true },
+      newValue: { lineQuantityUpdate: true },
     });
     successMessage = "Order line quantities updated.";
   } catch (error) {

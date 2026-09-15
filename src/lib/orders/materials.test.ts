@@ -2,13 +2,12 @@ import { describe, expect, it } from "vitest";
 import { evaluateMaterialUsage } from "@/lib/orders/materials";
 
 describe("material usage", () => {
-  it("computes total needed from per-unit × line qty and usage from stage cumulative", () => {
+  it("computes total needed from totalQuantity and usage from entryUsages", () => {
     const result = evaluateMaterialUsage({
       name: "Lamination",
-      quantityPerUnit: 2,
+      totalQuantity: 20,
       quantityReceived: 20,
-      lineQuantity: 10,
-      stageCumulatives: [5],
+      entryUsages: [10],
     });
     expect(result.totalNeeded).toBe(20);
     expect(result.used).toBe(10);
@@ -20,10 +19,9 @@ describe("material usage", () => {
   it("warns when received is below total needed", () => {
     const result = evaluateMaterialUsage({
       name: "Lamination",
-      quantityPerUnit: 2,
+      totalQuantity: 20,
       quantityReceived: 8,
-      lineQuantity: 10,
-      stageCumulatives: [0],
+      entryUsages: [0],
     });
     expect(result.isShort).toBe(true);
     expect(result.warning).toContain("received 8 of 20");
@@ -32,10 +30,9 @@ describe("material usage", () => {
   it("warns when usage exceeds received", () => {
     const result = evaluateMaterialUsage({
       name: "Lamination",
-      quantityPerUnit: 2,
+      totalQuantity: 20,
       quantityReceived: 6,
-      lineQuantity: 10,
-      stageCumulatives: [5],
+      entryUsages: [10],
     });
     expect(result.used).toBe(10);
     expect(result.available).toBe(-4);

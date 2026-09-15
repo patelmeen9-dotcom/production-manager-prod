@@ -29,33 +29,36 @@ type MappingProcess = {
 
 type LineProcess = MappingProcess & { expectedDays: string };
 
+/** Order-level material (entered once for the whole order). */
 type MaterialDraft = {
   key: string;
   name: string;
-  quantityPerUnit: string;
+  totalQuantity: string;
   quantityReceived: string;
-  processCodes: string[];
+};
+
+/** A line's answer for one category: free text (OPEN_TEXT) or selected option ids (DROPDOWN). */
+type CategoryValueDraft = {
+  text: string;
+  optionIds: string[];
 };
 
 type LineDraft = {
   key: string;
   productId: string;
+  quantity: string;
   remarks: string;
-  /** Quantity per mapped category id. Empty = not on the order. */
-  categoryQty: Record<string, string>;
-  /** Used when the product has no mapped categories. */
-  uncategorizedQty: string;
+  /** Category answers per mapped category id. Purely descriptive — never affects quantity. */
+  categoryValues: Record<string, CategoryValueDraft>;
   processes: LineProcess[];
-  materials: MaterialDraft[];
 };
 
 function newMaterial(): MaterialDraft {
   return {
     key: `mat-${Math.random().toString(36).slice(2, 9)}`,
     name: "",
-    quantityPerUnit: "1",
+    totalQuantity: "",
     quantityReceived: "0",
-    processCodes: [],
   };
 }
 
@@ -63,11 +66,10 @@ function newLine(): LineDraft {
   return {
     key: `line-${Math.random().toString(36).slice(2, 10)}`,
     productId: "",
+    quantity: "",
     remarks: "",
-    categoryQty: {},
-    uncategorizedQty: "",
+    categoryValues: {},
     processes: [],
-    materials: [],
   };
 }
 
@@ -90,6 +92,7 @@ export function ProductionOrderForm(props: {
   const [specialRequested, setSpecialRequested] = useState(false);
   const [plantId, setPlantId] = useState("");
   const [lines, setLines] = useState<LineDraft[]>([newLine()]);
+  const [materials, setMaterials] = useState<MaterialDraft[]>([]);
 
   const categoriesById = useMemo(
     () => new Map(props.categories.map((category) => [category.id, category])),
@@ -114,12 +117,7 @@ export function ProductionOrderForm(props: {
   }, [lines, productsById, categoriesById]);
 
   function rowTotal(line: LineDraft): number {
-    const product = productsById.get(line.productId);
-    const categoryIds = product?.categoryIds ?? [];
-    if (categoryIds.length === 0) {
-      return parseQty(line.uncategorizedQty);
-    }
-    return categoryIds.reduce((sum, categoryId) => sum + parseQty(line.categoryQty[categoryId]), 0);
+    return parseQty(line.quantity);
   }
 
   const totalQuantity = lines.reduce((sum, line) => sum + rowTotal(line), 0);
@@ -133,53 +131,71 @@ export function ProductionOrderForm(props: {
     updateLine(lineKey, {
       productId,
       processes: mapping.map((row) => ({ ...row, expectedDays: "" })),
-      categoryQty: {},
-      uncategorizedQty: "",
-      materials: [],
+      categoryValues: {},
     });
   }
 
+  function updateMaterial(key: string, patch: Partial<MaterialDraft>) {
+    setMaterials((current) => current.map((mat) => (mat.key === key ? { ...mat, ...patch } : mat)));
+  }
+
   const linesJson = JSON.stringify(
-    lines.flatMap((line) => {
-      const product = productsById.get(line.productId);
-      const categoryIds = product?.categoryIds ?? [];
-      const cells =
-        categoryIds.length === 0
-          ? parseQty(line.uncategorizedQty) > 0
-            ? [{ categoryId: null as string | null, quantity: parseQty(line.uncategorizedQty) }]
-            : []
-          : categoryIds
-              .map((categoryId) => ({ categoryId, quantity: parseQty(line.categoryQty[categoryId]) }))
-              .filter((cell) => cell.quantity > 0);
-      return cells.map((cell) => ({
-        productId: line.productId,
-        quantity: cell.quantity,
-        remarks: line.remarks,
-        categorySelections: cell.categoryId
-          ? [{ productCategoryId: cell.categoryId, textValue: "", optionIds: [] }]
-          : [],
-        processes: line.processes.map((process, index) => ({
-          processId: process.processId,
-          processCode: process.processCode,
-          processName: process.processName,
-          sequence: index + 1,
-          expectedDays: process.expectedDays,
-        })),
-        materials: line.materials
-          .filter((material) => material.name.trim())
-          .map((material) => ({
-            name: material.name,
-            quantityPerUnit: material.quantityPerUnit,
-            quantityReceived: material.quantityReceived,
-            processCodes: material.processCodes,
+    lines
+      .filter((line) => line.productId && parseQty(line.quantity) > 0)
+      .map((line) => {
+        const product = productsById.get(line.productId);
+        const categoryIds = product?.categoryIds ?? [];
+        const categorySelections = categoryIds
+          .map((categoryId) => {
+            const category = categoriesById.get(categoryId);
+            const value = line.categoryValues[categoryId];
+            if (!category || !value) {
+              return null;
+            }
+            if (category.inputType === "DROPDOWN") {
+              return value.optionIds.length > 0
+                ? { productCategoryId: categoryId, textValue: "", optionIds: value.optionIds }
+                : null;
+            }
+            return value.text.trim()
+              ? { productCategoryId: categoryId, textValue: value.text.trim(), optionIds: [] }
+              : null;
+          })
+          .filter((selection): selection is { productCategoryId: string; textValue: string; optionIds: string[] } =>
+            selection !== null,
+          );
+        return {
+          productId: line.productId,
+          quantity: parseQty(line.quantity),
+          remarks: line.remarks,
+          categorySelections,
+          processes: line.processes.map((process, index) => ({
+            processId: process.processId,
+            processCode: process.processCode,
+            processName: process.processName,
+            sequence: index + 1,
+            expectedDays: process.expectedDays,
           })),
-      }));
-    }),
+          materials: [],
+        };
+      }),
+  );
+
+  // Order-level materials are passed separately and will be attached to the first line server-side
+  const materialsJson = JSON.stringify(
+    materials
+      .filter((mat) => mat.name.trim() && parseQty(mat.totalQuantity) > 0)
+      .map((mat) => ({
+        name: mat.name.trim(),
+        totalQuantity: parseQty(mat.totalQuantity),
+        quantityReceived: Number(mat.quantityReceived) || 0,
+      })),
   );
 
   return (
     <ActionForm action={createProductionOrderAction} submitLabel="Create order">
       <input type="hidden" name="linesJson" value={linesJson} />
+      <input type="hidden" name="materialsJson" value={materialsJson} />
       <FormGrid cols={3}>
         <div>
           <Label htmlFor="clientId">Client</Label>
@@ -209,11 +225,10 @@ export function ProductionOrderForm(props: {
                   processes:
                     line.productId && next
                       ? (props.mappingsByPlantProduct[next]?.[line.productId] ?? []).map((row) => ({
-                          ...row,
-                          expectedDays: "",
-                        }))
+                        ...row,
+                        expectedDays: "",
+                      }))
                       : [],
-                  materials: [],
                 })),
               );
             }}
@@ -282,8 +297,8 @@ export function ProductionOrderForm(props: {
             <div>
               <h2 className="text-sm font-medium text-white">Order lines</h2>
               <p className="text-xs text-slate-500">
-                Rows are products. Columns are mapped categories. Enter quantity per product + category, or leave blank
-                for -. Total is calculated. Processes and materials stay per product.
+                Rows are products. Enter one quantity per line. Columns are the product&apos;s mapped categories —
+                fill in details (text or pick from the dropdown); they describe the line and don&apos;t affect quantity.
               </p>
             </div>
             <p className="text-sm text-slate-300">Total order qty: {totalQuantity || "—"}</p>
@@ -294,19 +309,18 @@ export function ProductionOrderForm(props: {
               <thead className="border-b border-slate-700 bg-slate-900/80 text-[10.5px] font-semibold uppercase tracking-wide text-slate-400">
                 <tr>
                   <th className="px-3 py-2">Product</th>
+                  <th className="px-3 py-2 text-right">Quantity</th>
                   {matrixColumns.map((category) => (
-                    <th key={category.id} className="px-3 py-2 text-right">
+                    <th key={category.id} className="px-3 py-2">
                       {category.name}
                     </th>
                   ))}
-                  <th className="px-3 py-2 text-right">Total</th>
                   <th className="px-3 py-2" />
                 </tr>
               </thead>
               <tbody>
                 {lines.map((line) => {
                   const mappedIds = new Set(productsById.get(line.productId)?.categoryIds ?? []);
-                  const hasCategories = mappedIds.size > 0;
                   return (
                     <tr key={line.key} className="border-b border-slate-800">
                       <td className="px-3 py-2">
@@ -324,44 +338,102 @@ export function ProductionOrderForm(props: {
                           ))}
                         </select>
                       </td>
+                      <td className="px-3 py-2 text-right">
+                        <input
+                          type="number"
+                          min={1}
+                          required={Boolean(line.productId)}
+                          value={line.quantity}
+                          onChange={(event) => updateLine(line.key, { quantity: event.target.value })}
+                          className="ml-auto w-24 rounded-md border border-slate-600 bg-slate-900 px-2 py-1.5 text-right text-sm"
+                          placeholder="qty"
+                        />
+                      </td>
                       {matrixColumns.map((category) => {
                         const applicable = mappedIds.has(category.id);
-                        return (
-                          <td key={category.id} className="px-3 py-2 text-right">
-                            {applicable ? (
-                              <input
-                                type="number"
-                                min={1}
-                                value={line.categoryQty[category.id] ?? ""}
+                        if (!applicable) {
+                          return (
+                            <td key={category.id} className="px-3 py-2">
+                              <span className="text-slate-500">-</span>
+                            </td>
+                          );
+                        }
+                        const value = line.categoryValues[category.id] ?? { text: "", optionIds: [] };
+                        if (category.inputType === "DROPDOWN") {
+                          if (category.choiceMode === "MULTI") {
+                            return (
+                              <td key={category.id} className="px-3 py-2">
+                                <div className="flex max-h-24 min-w-[160px] flex-col gap-1 overflow-y-auto rounded-md border border-slate-600 bg-slate-900 p-2">
+                                  {category.options.map((option) => (
+                                    <label key={option.id} className="flex items-center gap-2 text-xs text-slate-200">
+                                      <input
+                                        type="checkbox"
+                                        checked={value.optionIds.includes(option.id)}
+                                        onChange={(event) => {
+                                          const next = new Set(value.optionIds);
+                                          if (event.target.checked) next.add(option.id);
+                                          else next.delete(option.id);
+                                          updateLine(line.key, {
+                                            categoryValues: {
+                                              ...line.categoryValues,
+                                              [category.id]: { text: "", optionIds: [...next] },
+                                            },
+                                          });
+                                        }}
+                                      />
+                                      {option.name}
+                                    </label>
+                                  ))}
+                                </div>
+                              </td>
+                            );
+                          }
+                          return (
+                            <td key={category.id} className="px-3 py-2">
+                              <select
+                                value={value.optionIds[0] ?? ""}
                                 onChange={(event) =>
                                   updateLine(line.key, {
-                                    categoryQty: { ...line.categoryQty, [category.id]: event.target.value },
+                                    categoryValues: {
+                                      ...line.categoryValues,
+                                      [category.id]: {
+                                        text: "",
+                                        optionIds: event.target.value ? [event.target.value] : [],
+                                      },
+                                    },
                                   })
                                 }
-                                className="ml-auto w-20 rounded-md border border-slate-600 bg-slate-900 px-2 py-1.5 text-right text-sm"
-                                placeholder="-"
-                              />
-                            ) : (
-                              <span className="text-slate-500">-</span>
-                            )}
+                                className="w-full min-w-[140px] rounded-md border border-slate-600 bg-slate-900 px-2 py-1.5 text-sm"
+                              >
+                                <option value="">—</option>
+                                {category.options.map((option) => (
+                                  <option key={option.id} value={option.id}>
+                                    {option.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                          );
+                        }
+                        return (
+                          <td key={category.id} className="px-3 py-2">
+                            <input
+                              type="text"
+                              value={value.text}
+                              onChange={(event) =>
+                                updateLine(line.key, {
+                                  categoryValues: {
+                                    ...line.categoryValues,
+                                    [category.id]: { text: event.target.value, optionIds: [] },
+                                  },
+                                })
+                              }
+                              className="w-full min-w-[140px] rounded-md border border-slate-600 bg-slate-900 px-2 py-1.5 text-sm"
+                              placeholder="—"
+                            />
                           </td>
                         );
                       })}
-                      <td className="px-3 py-2 text-right font-mono text-slate-200">
-                        {hasCategories ? (
-                          rowTotal(line) || "-"
-                        ) : (
-                          <input
-                            type="number"
-                            min={1}
-                            required={!hasCategories && Boolean(line.productId)}
-                            value={line.uncategorizedQty}
-                            onChange={(event) => updateLine(line.key, { uncategorizedQty: event.target.value })}
-                            className="ml-auto w-20 rounded-md border border-slate-600 bg-slate-900 px-2 py-1.5 text-right text-sm"
-                            placeholder="qty"
-                          />
-                        )}
-                      </td>
                       <td className="px-3 py-2">
                         <Button
                           type="button"
@@ -379,10 +451,10 @@ export function ProductionOrderForm(props: {
               <tfoot>
                 <tr className="bg-slate-900/80">
                   <td className="px-3 py-2 text-xs font-semibold text-slate-200">Total order quantity</td>
+                  <td className="px-3 py-2 text-right font-mono font-semibold text-white">{totalQuantity || "—"}</td>
                   {matrixColumns.map((category) => (
                     <td key={category.id} />
                   ))}
-                  <td className="px-3 py-2 text-right font-mono font-semibold text-white">{totalQuantity || "—"}</td>
                   <td />
                 </tr>
               </tfoot>
@@ -485,13 +557,8 @@ export function ProductionOrderForm(props: {
                                 variant="secondary"
                                 disabled={line.processes.length === 1}
                                 onClick={() => {
-                                  const removed = line.processes[processIndex]!;
                                   updateLine(line.key, {
                                     processes: line.processes.filter((_, i) => i !== processIndex),
-                                    materials: line.materials.map((material) => ({
-                                      ...material,
-                                      processCodes: material.processCodes.filter((code) => code !== removed.processCode),
-                                    })),
                                   });
                                 }}
                               >
@@ -531,121 +598,76 @@ export function ProductionOrderForm(props: {
                       </div>
                     ) : null}
                   </div>
-
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <p className="text-xs font-medium text-slate-300">Materials (optional, per line)</p>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={() => updateLine(line.key, { materials: [...line.materials, newMaterial()] })}
-                      >
-                        Add material
-                      </Button>
-                    </div>
-                    <div className="mt-2 space-y-2">
-                      {line.materials.map((material) => {
-                        const perUnit = Number(material.quantityPerUnit);
-                        const totalNeeded =
-                          Number.isFinite(perUnit) && Number.isFinite(lineQty) && lineQty > 0 ? perUnit * lineQty : null;
-                        return (
-                          <div key={material.key} className="grid gap-2 rounded border border-slate-800 p-2 sm:grid-cols-2">
-                            <div>
-                              <Label>Material name</Label>
-                              <input
-                                value={material.name}
-                                onChange={(event) =>
-                                  updateLine(line.key, {
-                                    materials: line.materials.map((row) =>
-                                      row.key === material.key ? { ...row, name: event.target.value } : row,
-                                    ),
-                                  })
-                                }
-                                className="mt-1 w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm"
-                                placeholder="e.g. Lamination"
-                              />
-                            </div>
-                            <div>
-                              <Label>Qty per 1 product unit</Label>
-                              <input
-                                type="number"
-                                min={1}
-                                value={material.quantityPerUnit}
-                                onChange={(event) =>
-                                  updateLine(line.key, {
-                                    materials: line.materials.map((row) =>
-                                      row.key === material.key ? { ...row, quantityPerUnit: event.target.value } : row,
-                                    ),
-                                  })
-                                }
-                                className="mt-1 w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm"
-                              />
-                              <p className="mt-1 text-xs text-slate-500">
-                                Total needed for line: {totalNeeded ?? "—"}
-                              </p>
-                            </div>
-                            <div>
-                              <Label>Qty received</Label>
-                              <input
-                                type="number"
-                                min={0}
-                                value={material.quantityReceived}
-                                onChange={(event) =>
-                                  updateLine(line.key, {
-                                    materials: line.materials.map((row) =>
-                                      row.key === material.key ? { ...row, quantityReceived: event.target.value } : row,
-                                    ),
-                                  })
-                                }
-                                className="mt-1 w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm"
-                              />
-                            </div>
-                            <div>
-                              <Label>Used in stages</Label>
-                              <div className="mt-1 max-h-28 space-y-1 overflow-auto rounded border border-slate-700 p-2">
-                                {line.processes.map((process) => (
-                                  <label key={process.processCode} className="flex items-center gap-2 text-sm text-slate-200">
-                                    <input
-                                      type="checkbox"
-                                      checked={material.processCodes.includes(process.processCode)}
-                                      onChange={(event) => {
-                                        const next = new Set(material.processCodes);
-                                        if (event.target.checked) next.add(process.processCode);
-                                        else next.delete(process.processCode);
-                                        updateLine(line.key, {
-                                          materials: line.materials.map((row) =>
-                                            row.key === material.key ? { ...row, processCodes: [...next] } : row,
-                                          ),
-                                        });
-                                      }}
-                                    />
-                                    {process.processName}
-                                  </label>
-                                ))}
-                              </div>
-                            </div>
-                            <div className="sm:col-span-2">
-                              <Button
-                                type="button"
-                                variant="secondary"
-                                onClick={() =>
-                                  updateLine(line.key, {
-                                    materials: line.materials.filter((row) => row.key !== material.key),
-                                  })
-                                }
-                              >
-                                Remove material
-                              </Button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
                 </div>
               );
             })}
           </div>
+        </FormFull>
+
+        {/* ── Order-level materials ── */}
+        <FormFull>
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-medium text-white">Order materials (optional)</h2>
+              <p className="text-xs text-slate-500">
+                Materials required for this order. Enter the total quantity needed for the entire order.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setMaterials((current) => [...current, newMaterial()])}
+            >
+              Add material
+            </Button>
+          </div>
+          {materials.length > 0 ? (
+            <div className="mt-3 space-y-2">
+              {materials.map((mat) => (
+                <div key={mat.key} className="grid gap-3 rounded border border-slate-700 p-3 sm:grid-cols-[1fr_160px_160px_auto]">
+                  <div>
+                    <Label>Material name</Label>
+                    <input
+                      value={mat.name}
+                      onChange={(event) => updateMaterial(mat.key, { name: event.target.value })}
+                      className="mt-1 w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm"
+                      placeholder="e.g. Lamination sheet"
+                    />
+                  </div>
+                  <div>
+                    <Label>Total quantity required</Label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={mat.totalQuantity}
+                      onChange={(event) => updateMaterial(mat.key, { totalQuantity: event.target.value })}
+                      className="mt-1 w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm"
+                      placeholder="e.g. 500"
+                    />
+                  </div>
+                  <div>
+                    <Label>Qty received</Label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={mat.quantityReceived}
+                      onChange={(event) => updateMaterial(mat.key, { quantityReceived: event.target.value })}
+                      className="mt-1 w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setMaterials((current) => current.filter((m) => m.key !== mat.key))}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </FormFull>
 
         <FormFull>

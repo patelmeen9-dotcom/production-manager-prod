@@ -8,11 +8,9 @@ export const orderLineCategorySelectionSchema = z.object({
 
 export const orderLineMaterialSchema = z.object({
   name: z.string().trim().min(1, "Material name is required.").max(160),
-  /** Qty needed to make 1 unit of the line product. Total needed = this × line quantity. */
-  quantityPerUnit: z.coerce.number().int().positive("Quantity per unit must be greater than zero."),
+  /** Total qty of this material required for the whole order (user-entered). */
+  totalQuantity: z.coerce.number().int().positive("Total quantity must be greater than zero."),
   quantityReceived: z.coerce.number().int().min(0, "Received quantity cannot be negative."),
-  /** Process codes selected for this material (matched to the line process snapshot). */
-  processCodes: z.array(z.string().min(1)).min(1, "Select at least one process stage for the material."),
 });
 
 export const orderLineProcessSchema = z.object({
@@ -67,31 +65,19 @@ export const productionOrderSchema = z
         }
         codes.add(process.processCode);
       }
-      for (const material of line.materials) {
-        for (const code of material.processCodes) {
-          if (!codes.has(code)) {
-            ctx.addIssue({
-              code: "custom",
-              message: `Material "${material.name}" references a process not on line ${index + 1}.`,
-              path: ["lines", index, "materials"],
-            });
-          }
-        }
-      }
     }
   });
 
-/** Quantity cells for the product × category matrix (no-entry orders). */
-export const orderLineMatrixEditSchema = z.object({
-  cells: z
+/** Per-line quantity edits (no-entry orders). Categories are descriptive, not quantity-bearing. */
+export const orderLineQuantityEditSchema = z.object({
+  lines: z
     .array(
       z.object({
-        productId: z.string().min(1),
-        categoryId: z.string().min(1).nullable(),
-        quantity: z.coerce.number().int().min(0, "Quantity cannot be negative."),
+        lineId: z.string().min(1),
+        quantity: z.coerce.number().int().positive("Line quantity must be greater than zero."),
       }),
     )
-    .min(1, "Order lines are required."),
+    .min(1, "At least one order line is required."),
 });
 
 /** Safe edit: remarks + material received quantities only when production has started. */

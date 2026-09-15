@@ -1,22 +1,21 @@
 /**
- * Order-line material usage helpers.
- * Total needed = quantityPerUnit × lineQuantity.
- * Used = sum over linked stages of (stageCumulative × quantityPerUnit).
+ * Order material usage helpers.
+ * Total needed = totalQuantity (user-entered for the whole order).
+ * Used = sum of quantityUsed recorded across all production entries.
  * Available = quantityReceived − used.
  */
 
 export type MaterialUsageInput = {
   name: string;
-  quantityPerUnit: number;
+  totalQuantity: number;
   quantityReceived: number;
-  lineQuantity: number;
-  /** Cumulative completed qty for each linked order-process stage. */
-  stageCumulatives: number[];
+  /** Quantities used across individual production entries. */
+  entryUsages: number[];
 };
 
 export type MaterialUsage = {
   name: string;
-  quantityPerUnit: number;
+  totalQuantity: number;
   quantityReceived: number;
   totalNeeded: number;
   used: number;
@@ -27,11 +26,8 @@ export type MaterialUsage = {
 };
 
 export function evaluateMaterialUsage(input: MaterialUsageInput): MaterialUsage {
-  const totalNeeded = input.quantityPerUnit * input.lineQuantity;
-  const used = input.stageCumulatives.reduce(
-    (sum, cumulative) => sum + Math.max(0, cumulative) * input.quantityPerUnit,
-    0,
-  );
+  const totalNeeded = input.totalQuantity;
+  const used = input.entryUsages.reduce((sum, qty) => sum + Math.max(0, qty), 0);
   const available = input.quantityReceived - used;
   const remainingToReceive = Math.max(0, totalNeeded - input.quantityReceived);
   const isShort = available < 0 || input.quantityReceived < totalNeeded;
@@ -43,7 +39,7 @@ export function evaluateMaterialUsage(input: MaterialUsageInput): MaterialUsage 
   }
   return {
     name: input.name,
-    quantityPerUnit: input.quantityPerUnit,
+    totalQuantity: input.totalQuantity,
     quantityReceived: input.quantityReceived,
     totalNeeded,
     used,

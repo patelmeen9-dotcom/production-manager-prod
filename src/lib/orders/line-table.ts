@@ -1,4 +1,4 @@
-/** Product × category quantity matrix for order lines. */
+/** Display helpers for order lines. Categories are descriptive attributes of a line, never a quantity split. */
 
 export type CategoryColumn = {
   id: string;
@@ -42,8 +42,9 @@ export function lineCategoryIds(line: LineForTable): string[] {
 }
 
 /**
- * Union of categories mapped to products on these lines, plus any selected categories.
- * Stable sort by category name.
+ * Union of categories mapped to products on these lines, plus any categories with a
+ * recorded selection. Stable sort by category name. Used as the column set for
+ * displaying/exporting a line's category attribute values.
  */
 export function collectCategoryColumns(lines: LineForTable[]): CategoryColumn[] {
   const map = new Map<string, string>();
@@ -63,128 +64,63 @@ export function collectCategoryColumns(lines: LineForTable[]): CategoryColumn[] 
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export type MatrixCell = {
-  /** Quantity for this product + category; null means not on the order. */
-  quantity: number | null;
-  /** Product is mapped to this category (cell can exist). */
-  applicable: boolean;
-};
+/**
+ * Human-readable value for one line's answer to one category column: the open-text
+ * value, the selected dropdown option name(s) joined with ", ", or "-" if unanswered
+ * or not applicable to this line's product.
+ */
+export function formatCategoryValue(line: LineForTable, categoryId: string): string {
+  const selection = (line.categorySelections ?? []).find(
+    (item) => selectionCategoryId(item) === categoryId,
+  );
+  if (!selection) {
+    return "-";
+  }
+  const optionNames = (selection.selectedOptions ?? []).map((row) => row.categoryOption.name);
+  if (optionNames.length > 0) {
+    return optionNames.join(", ");
+  }
+  const text = selection.textValue?.trim();
+  return text ? text : "-";
+}
 
-export type ProductCategoryMatrixRow = {
+export type LineRow = {
+  lineId: string;
+  lineNumber: number;
   productId: string;
   productName: string;
   details: string | null;
-  cells: Record<string, MatrixCell>;
-  total: number;
+  quantity: number;
+  remarks: string | null;
+  /** categoryId -> display value ("-" if unanswered). */
+  categoryValues: Record<string, string>;
 };
 
-export type ProductCategoryMatrix = {
+export type LineTable = {
   columns: CategoryColumn[];
-  rows: ProductCategoryMatrixRow[];
+  rows: LineRow[];
   orderTotal: number;
 };
-
-function productKey(line: LineForTable): string {
-  return line.product.id || line.product.name;
-}
 
 /**
- * Rows = products on the order. Columns = mapped categories.
- * A line with exactly one category contributes its quantity to that cell.
- * Lines with no category (or multiple attribute-style categories) count only in the product total.
+ * One row per order line (never merged/split by category). Columns are the union of
+ * categories relevant to these lines; each cell shows that line's recorded value for
+ * the category, purely descriptive and independent of quantity.
  */
-export function buildProductCategoryMatrix(lines: LineForTable[]): ProductCategoryMatrix {
+export function buildLineTable(lines: LineForTable[]): LineTable {
   const columns = collectCategoryColumns(lines);
-  const rowMap = new Map<string, ProductCategoryMatrixRow>();
-
-  for (const line of lines) {
-    const id = productKey(line);
-    const existing = rowMap.get(id);
-    const mapped = new Set((line.product.categoryAssignments ?? []).map((row) => row.productCategory.id));
-    const row =
-      existing ??
-      ({
-        productId: id,
-        productName: line.product.name,
-        details: line.product.details ?? null,
-        cells: Object.fromEntries(
-          columns.map((column) => [
-            column.id,
-            { quantity: null as number | null, applicable: mapped.has(column.id) },
-          ]),
-        ),
-        total: 0,
-      } satisfies ProductCategoryMatrixRow);
-
-    for (const column of columns) {
-      if (!row.cells[column.id]) {
-        row.cells[column.id] = { quantity: null, applicable: mapped.has(column.id) };
-      }
-      if (mapped.has(column.id)) {
-        row.cells[column.id]!.applicable = true;
-      }
-    }
-
-    row.total += line.quantity;
-    const cats = lineCategoryIds(line);
-    if (cats.length === 1) {
-      const categoryId = cats[0]!;
-      const cell = row.cells[categoryId] ?? { quantity: null, applicable: true };
-      cell.applicable = true;
-      cell.quantity = (cell.quantity ?? 0) + line.quantity;
-      row.cells[categoryId] = cell;
-    }
-    rowMap.set(id, row);
-  }
-
-  const rows = [...rowMap.values()];
-  const orderTotal = rows.reduce((sum, row) => sum + row.total, 0);
+  const rows: LineRow[] = lines.map((line) => ({
+    lineId: line.id,
+    lineNumber: line.lineNumber,
+    productId: line.product.id ?? line.product.name,
+    productName: line.product.name,
+    details: line.product.details ?? null,
+    quantity: line.quantity,
+    remarks: line.remarks ?? null,
+    categoryValues: Object.fromEntries(
+      columns.map((column) => [column.id, formatCategoryValue(line, column.id)]),
+    ),
+  }));
+  const orderTotal = lines.reduce((sum, line) => sum + line.quantity, 0);
   return { columns, rows, orderTotal };
-}
-
-export function formatMatrixCell(cell: MatrixCell | undefined): string {
-  if (!cell?.applicable || cell.quantity == null || cell.quantity <= 0) {
-    return "-";
-  }
-  return String(cell.quantity);
-}
-
-export type MatrixEditorRow = {
-  productId: string;
-  productName: string;
-  hasMappedCategories: boolean;
-  cells: Record<string, { applicable: boolean; quantity: number | null }>;
-  uncategorizedQuantity: number | null;
-};
-
-export type MatrixEditorModel = {
-  columns: CategoryColumn[];
-  rows: MatrixEditorRow[];
-  orderTotal: number;
-};
-
-/** Editable product × category quantities, excluding legacy multi-category attribute lines. */
-export function buildMatrixEditorModel(lines: LineForTable[]): MatrixEditorModel {
-  const matrix = buildProductCategoryMatrix(lines);
-  const rows: MatrixEditorRow[] = matrix.rows.map((row) => {
-    const productLines = lines.filter((line) => productKey(line) === row.productId);
-    const mapped = new Set(
-      productLines.flatMap((line) => (line.product.categoryAssignments ?? []).map((item) => item.productCategory.id)),
-    );
-    const hasMappedCategories = mapped.size > 0;
-    let uncategorizedQuantity: number | null = null;
-    if (!hasMappedCategories) {
-      uncategorizedQuantity = productLines
-        .filter((line) => lineCategoryIds(line).length === 0)
-        .reduce((sum, line) => sum + line.quantity, 0);
-    }
-    return {
-      productId: row.productId,
-      productName: row.productName,
-      hasMappedCategories,
-      cells: row.cells,
-      uncategorizedQuantity,
-    };
-  });
-  return { columns: matrix.columns, rows, orderTotal: matrix.orderTotal };
 }

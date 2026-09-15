@@ -50,8 +50,8 @@ async function main() {
   const del_prodEntries = await prisma.productionEntry.deleteMany();
   console.log(`  productionEntry                     deleted: ${del_prodEntries.count}`);
 
-  const del_matStages = await prisma.productionOrderLineMaterialStage.deleteMany();
-  console.log(`  productionOrderLineMaterialStage    deleted: ${del_matStages.count}`);
+  const del_matUsages = await prisma.productionEntryMaterialUsage.deleteMany();
+  console.log(`  productionEntryMaterialUsage        deleted: ${del_matUsages.count}`);
 
   const del_mats = await prisma.productionOrderLineMaterial.deleteMany();
   console.log(`  productionOrderLineMaterial         deleted: ${del_mats.count}`);

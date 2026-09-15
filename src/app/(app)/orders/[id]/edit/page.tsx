@@ -5,9 +5,8 @@ import { requireMasterWriter } from "@/lib/masters/auth";
 import { prisma } from "@/lib/db";
 import { requireGrantedPlant } from "@/lib/plants/access";
 import { formatOrderLineLabel } from "@/lib/orders/line-label";
-import { buildMatrixEditorModel } from "@/lib/orders/line-table";
 import { ProductionOrderSafeEditForm } from "@/components/orders/production-order-safe-edit-form";
-import { OrderLineMatrixEditForm } from "@/components/orders/order-line-matrix-edit-form";
+import { OrderLineQuantityEditForm } from "@/components/orders/order-line-quantity-edit-form";
 import { OrderLinesTable } from "@/components/orders/order-lines-table";
 import { OrderAttachmentsPanel } from "@/components/orders/order-attachments-panel";
 
@@ -47,7 +46,6 @@ export default async function EditOrderPage({ params }: { params: Promise<{ id: 
   await requireGrantedPlant(context, order.plantId);
 
   const hasEntries = order.productionEntries.length > 0 || order.lifecycleStatus !== "NOT_STARTED";
-  const matrixModel = buildMatrixEditorModel(order.lines);
   const safeForm = (
     <ProductionOrderSafeEditForm
       orderId={order.id}
@@ -66,9 +64,9 @@ export default async function EditOrderPage({ params }: { params: Promise<{ id: 
       materials={order.lines.flatMap((line) =>
         line.materials.map((material) => ({
           id: material.id,
-          label: `${formatOrderLineLabel(line)} · ${material.name}`,
+          label: material.name,
           quantityReceived: material.quantityReceived,
-          totalNeeded: material.quantityPerUnit * line.quantity,
+          totalNeeded: material.totalQuantity,
         })),
       )}
     />
@@ -95,7 +93,7 @@ export default async function EditOrderPage({ params }: { params: Promise<{ id: 
         </div>
       ) : (
         <div className="space-y-6">
-          <OrderLineMatrixEditForm orderId={order.id} model={matrixModel} />
+          <OrderLineQuantityEditForm orderId={order.id} lines={order.lines} />
           {safeForm}
         </div>
       )}

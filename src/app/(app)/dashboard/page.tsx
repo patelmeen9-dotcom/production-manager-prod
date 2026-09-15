@@ -205,9 +205,9 @@ export default async function DashboardPage({
             materials: {
               select: {
                 name: true,
-                quantityPerUnit: true,
+                totalQuantity: true,
                 quantityReceived: true,
-                stages: { select: { orderProcessId: true } },
+                entryUsages: { select: { quantityUsed: true } },
               },
             },
           },
@@ -305,9 +305,9 @@ export default async function DashboardPage({
         })),
         materials: line.materials.map((material) => ({
           name: material.name,
-          quantityPerUnit: material.quantityPerUnit,
+          totalQuantity: material.totalQuantity,
           quantityReceived: material.quantityReceived,
-          orderProcessIds: material.stages.map((stage) => stage.orderProcessId),
+          entryUsages: material.entryUsages.map((u) => u.quantityUsed),
         })),
       })),
       entries: entriesByOrder.get(order.id) ?? [],

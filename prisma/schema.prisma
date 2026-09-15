@@ -47,6 +47,7 @@ model Organization {
   orderProcesses ProductionOrderProcess[]
   orderSpecialActivities ProductionOrderSpecialActivity[]
   productionEntries ProductionEntry[]
+  productionEntryMaterialUsages ProductionEntryMaterialUsage[]
   specialActivityEntries SpecialActivityEntry[]
   auditLogs AuditLog[]
   importJobs ImportJob[]
@@ -458,37 +459,42 @@ model ProductionOrderLineCategoryOption {
   @@index([categoryOptionId])
 }
 
-/// Order-line material requirement (customer-supplied / order-specific; no shared stock).
+/// Order-level material requirement (customer-supplied; entered once for the whole order).
 model ProductionOrderLineMaterial {
   id                    String   @id @default(cuid())
   organizationId        String
   productionOrderLineId String
   name                  String
-  /// Qty of material needed to make 1 unit of the line product.
-  quantityPerUnit       Int
-  /// Qty received for this order line.
+  /// Total qty of this material required for the entire order (user-entered).
+  totalQuantity         Int
+  /// Qty received for this order.
   quantityReceived      Int      @default(0)
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   orderLine    ProductionOrderLine @relation(fields: [productionOrderLineId], references: [id], onDelete: Cascade)
-  stages       ProductionOrderLineMaterialStage[]
+  entryUsages  ProductionEntryMaterialUsage[]
 
   @@index([organizationId, productionOrderLineId])
 }
 
-/// Links a line material to one or more order-line process snapshot stages where it is consumed.
-model ProductionOrderLineMaterialStage {
-  id               String @id @default(cuid())
-  materialId       String
-  orderProcessId   String
+/// Records how much of an order material was consumed during one production entry.
+model ProductionEntryMaterialUsage {
+  id             String   @id @default(cuid())
+  organizationId String
+  entryId        String
+  materialId     String
+  quantityUsed   Int
+  createdAt      DateTime @default(now())
 
+  organization Organization               @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  entry        ProductionEntry            @relation(fields: [entryId], references: [id], onDelete: Cascade)
   material     ProductionOrderLineMaterial @relation(fields: [materialId], references: [id], onDelete: Cascade)
-  orderProcess ProductionOrderProcess @relation(fields: [orderProcessId], references: [id], onDelete: Cascade)
 
-  @@unique([materialId, orderProcessId])
-  @@index([orderProcessId])
+  @@unique([entryId, materialId])
+  @@index([organizationId, entryId])
+  @@index([organizationId, materialId])
 }
 
 /// Order-requested special/auxiliary activities. Not part of the main process sequence.
@@ -528,7 +534,6 @@ model ProductionOrderProcess {
   process         Process?            @relation(fields: [processId], references: [id], onDelete: SetNull)
   productionEntries ProductionEntry[]
   specialActivityEntries SpecialActivityEntry[]
-  materialStages  ProductionOrderLineMaterialStage[]
 
   @@unique([productionOrderLineId, sequence])
   @@index([organizationId, productionOrderId])
@@ -551,12 +556,13 @@ model ProductionEntry {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  organization    Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  plant           Plant                  @relation(fields: [plantId], references: [id], onDelete: Restrict)
-  productionOrder ProductionOrder        @relation(fields: [productionOrderId], references: [id], onDelete: Restrict)
-  orderProcess    ProductionOrderProcess @relation(fields: [orderProcessId], references: [id], onDelete: Restrict)
-  specialActivity SpecialActivity?       @relation(fields: [specialActivityId], references: [id], onDelete: SetNull)
-  createdBy       User                   @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  organization    Organization               @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  plant           Plant                      @relation(fields: [plantId], references: [id], onDelete: Restrict)
+  productionOrder ProductionOrder            @relation(fields: [productionOrderId], references: [id], onDelete: Restrict)
+  orderProcess    ProductionOrderProcess     @relation(fields: [orderProcessId], references: [id], onDelete: Restrict)
+  specialActivity SpecialActivity?           @relation(fields: [specialActivityId], references: [id], onDelete: SetNull)
+  createdBy       User                       @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  materialUsages  ProductionEntryMaterialUsage[]
 
   @@index([organizationId, productionOrderId, orderProcessId], map: "pe_org_order_process_idx")
   @@index([organizationId, plantId, entryDate], map: "pe_org_plant_date_idx")

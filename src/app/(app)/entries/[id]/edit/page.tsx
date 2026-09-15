@@ -5,7 +5,7 @@ import { prisma } from "@/lib/db";
 import { requireGrantedPlant } from "@/lib/plants/access";
 import { canRecordProduction } from "@/lib/plants/scope";
 import { formatDateOnly } from "@/lib/orders/date-rules";
-import { buildEntryLinesByOrder } from "@/lib/production/entry-form-data";
+import { buildEntryLinesByOrder, buildMaterialsByOrder } from "@/lib/production/entry-form-data";
 import { updateProductionEntryAction } from "@/lib/production/actions";
 import { ProductionEntryForm } from "@/components/production/production-entry-form";
 import { SavedBanner } from "@/components/ui/saved-banner";
@@ -44,6 +44,9 @@ export default async function EditEntryPage({
                 select: { id: true, sequence: true, processName: true },
                 orderBy: { sequence: "asc" },
               },
+              materials: {
+                select: { id: true, name: true, totalQuantity: true },
+              },
             },
             orderBy: { lineNumber: "asc" },
           },
@@ -58,6 +61,12 @@ export default async function EditEntryPage({
   await requireGrantedPlant(context, entry.plantId);
   const order = entry.productionOrder;
   const linesByOrder = buildEntryLinesByOrder([order]);
+  const materialsByOrder = buildMaterialsByOrder([
+    {
+      id: order.id,
+      materials: order.lines.flatMap((line) => line.materials),
+    },
+  ]);
 
   return (
     <main className="mx-auto max-w-5xl space-y-4">
@@ -66,6 +75,7 @@ export default async function EditEntryPage({
       <ProductionEntryForm
         orders={[{ id: order.id, orderNumber: order.orderNumber }]}
         linesByOrder={linesByOrder}
+        materialsByOrder={materialsByOrder}
         entry={{
           id: entry.id,
           productionOrderId: order.id,

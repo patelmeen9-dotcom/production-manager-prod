@@ -17,12 +17,20 @@ export type EntryLineOption = {
   stages: { value: string; label: string }[];
 };
 
+export type OrderMaterial = {
+  id: string;
+  name: string;
+  totalQuantity: number;
+};
+
 export function ProductionEntryForm(props: {
   orders: { id: string; orderNumber: string }[];
   /** Order lines (products) with category detail and their stages. */
   linesByOrder: Record<string, EntryLineOption[]>;
   /** Order-level special activities shown after a product is selected. */
   activitiesByOrder?: Record<string, { value: string; label: string }[]>;
+  /** Order-level materials (if any) keyed by order id. */
+  materialsByOrder?: Record<string, OrderMaterial[]>;
   defaultOrderId?: string;
   /** When editing an existing production entry. */
   entry?: {
@@ -42,6 +50,7 @@ export function ProductionEntryForm(props: {
   const [orderId, setOrderId] = useState(props.entry?.productionOrderId ?? props.defaultOrderId ?? props.orders[0]?.id ?? "");
   const lines = useMemo(() => props.linesByOrder[orderId] ?? [], [orderId, props.linesByOrder]);
   const activities = useMemo(() => props.activitiesByOrder?.[orderId] ?? [], [orderId, props.activitiesByOrder]);
+  const orderMaterials = useMemo(() => props.materialsByOrder?.[orderId] ?? [], [orderId, props.materialsByOrder]);
 
   const initialLineId =
     props.entry?.lineId ??
@@ -51,15 +60,13 @@ export function ProductionEntryForm(props: {
   const [lineDropdownOpen, setLineDropdownOpen] = useState(false);
   const lineDropdownRef = useRef<HTMLDivElement>(null);
   const selectedLine = useMemo(() => lines.find((line) => line.id === lineId) ?? null, [lines, lineId]);
-  /*const stageOptions = useMemo(() => {
-    if (!selectedLine) {
-      return [];
-    }
-    return [...selectedLine.stages, ...activities];
-  }, [selectedLine, activities]);*/
+
+  // Material usage quantities: materialId -> qty string
+  const [materialUsages, setMaterialUsages] = useState<Record<string, string>>({});
+
   useEffect(() => {
     if (!lineDropdownOpen) return;
-  
+
     const handleClickOutside = (event: MouseEvent) => {
       if (
         lineDropdownRef.current &&
@@ -68,29 +75,43 @@ export function ProductionEntryForm(props: {
         setLineDropdownOpen(false);
       }
     };
-  
+
     document.addEventListener("mousedown", handleClickOutside);
-  
+
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [lineDropdownOpen]);
-  
+
   const stageOptions = useMemo(() => {
     if (!selectedLine) {
       return [];
     }
-  
+
     return [...selectedLine.stages, ...activities];
   }, [selectedLine, activities]);
 
 
   const defaultStage = props.entry ? `process:${props.entry.orderProcessId}` : "";
 
+  // Build materialUsagesJson for form submission
+  const materialUsagesJson = JSON.stringify(
+    orderMaterials
+      .filter((mat) => {
+        const qty = Number(materialUsages[mat.id]);
+        return Number.isFinite(qty) && qty > 0;
+      })
+      .map((mat) => ({
+        materialId: mat.id,
+        quantityUsed: Number(materialUsages[mat.id]),
+      })),
+  );
+
   return (
     <div className="space-y-3">
       <ActionForm action={action} submitLabel={props.submitLabel ?? "Save incremental entry"}>
         {props.entry ? <input type="hidden" name="entryId" value={props.entry.id} /> : null}
+        <input type="hidden" name="materialUsagesJson" value={materialUsagesJson} />
         <FormGrid>
           <div>
             <Label htmlFor="productionOrderId">Order</Label>
@@ -102,6 +123,7 @@ export function ProductionEntryForm(props: {
               onChange={(event) => {
                 setOrderId(event.target.value);
                 setLineId("");
+                setMaterialUsages({});
               }}
               className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm"
               disabled={Boolean(props.entry)}
@@ -117,22 +139,6 @@ export function ProductionEntryForm(props: {
 
           <div>
             <Label htmlFor="orderLineId">Product / line</Label>
-            {/*<select
-              id="orderLineId"
-              name="orderLineId"
-              required
-              value={lineId}
-              onChange={(event) => setLineId(event.target.value)}
-              className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm"
-              disabled={!orderId || Boolean(props.entry)}
-            >
-              <option value="">Please select</option>
-              {lines.map((line) => (
-                <option key={line.id} value={line.id}>
-                  {line.label}
-                </option>
-              ))}
-            </select>*/}
             <div ref={lineDropdownRef} className="relative">
   {/* Keep the real field for form submission */}
   <select
@@ -261,6 +267,41 @@ export function ProductionEntryForm(props: {
           <FormFull>
             <TextField name="remarks" label="Remarks" defaultValue={props.entry?.remarks ?? ""} />
           </FormFull>
+
+          {/* ── Optional material usage for this entry ── */}
+          {orderMaterials.length > 0 ? (
+            <FormFull>
+              <div>
+                <p className="text-xs font-semibold text-slate-300">
+                  Material usage in this entry (optional)
+                </p>
+                <p className="text-xs text-slate-500">
+                  Enter how much of each material was consumed during this production entry. Leave blank if none used.
+                </p>
+              </div>
+              <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {orderMaterials.map((mat) => (
+                  <div key={mat.id}>
+                    <Label className="text-xs">{mat.name}</Label>
+                    <p className="text-[10px] text-slate-500">Total required: {mat.totalQuantity}</p>
+                    <input
+                      type="number"
+                      min={0}
+                      value={materialUsages[mat.id] ?? ""}
+                      onChange={(event) =>
+                        setMaterialUsages((prev) => ({
+                          ...prev,
+                          [mat.id]: event.target.value,
+                        }))
+                      }
+                      className="mt-1 w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm"
+                      placeholder="qty used"
+                    />
+                  </div>
+                ))}
+              </div>
+            </FormFull>
+          ) : null}
         </FormGrid>
       </ActionForm>
       {props.showBackToList !== false ? (

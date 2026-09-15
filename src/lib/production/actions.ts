@@ -33,28 +33,26 @@ async function materialWarningsForOrder(organizationId: string, orderId: string)
     include: {
       lines: {
         include: {
-          materials: { include: { stages: true } },
+          materials: {
+            include: {
+              entryUsages: { select: { quantityUsed: true } },
+            },
+          },
         },
       },
-      productionEntries: { select: { orderProcessId: true, quantity: true } },
     },
   });
   if (!order) {
     return [];
-  }
-  const sums = new Map<string, number>();
-  for (const entry of order.productionEntries) {
-    sums.set(entry.orderProcessId, (sums.get(entry.orderProcessId) ?? 0) + entry.quantity);
   }
   const warnings: string[] = [];
   for (const line of order.lines) {
     for (const material of line.materials) {
       const usage = evaluateMaterialUsage({
         name: material.name,
-        quantityPerUnit: material.quantityPerUnit,
+        totalQuantity: material.totalQuantity,
         quantityReceived: material.quantityReceived,
-        lineQuantity: line.quantity,
-        stageCumulatives: material.stages.map((stage) => sums.get(stage.orderProcessId) ?? 0),
+        entryUsages: material.entryUsages.map((u) => u.quantityUsed),
       });
       if (usage.warning) {
         warnings.push(usage.warning);
@@ -183,6 +181,29 @@ export async function createProductionEntryAction(_prev: FormState, formData: Fo
             createdByUserId: context.userId,
           },
         });
+
+        // Save optional material usage records for this entry
+        try {
+          const rawUsages = String(formData.get("materialUsagesJson") ?? "[]");
+          const usages: { materialId: string; quantityUsed: number }[] = JSON.parse(rawUsages);
+          if (Array.isArray(usages)) {
+            for (const usage of usages) {
+              if (!usage.materialId || !Number.isFinite(usage.quantityUsed) || usage.quantityUsed <= 0) continue;
+              await tx.productionEntryMaterialUsage.upsert({
+                where: { entryId_materialId: { entryId: created.id, materialId: usage.materialId } },
+                create: {
+                  organizationId: context.organizationId,
+                  entryId: created.id,
+                  materialId: usage.materialId,
+                  quantityUsed: usage.quantityUsed,
+                },
+                update: { quantityUsed: usage.quantityUsed },
+              });
+            }
+          }
+        } catch {
+          // Material usage is optional — don't fail the entry if parsing fails
+        }
         const after = await tx.productionEntry.findMany({
           where: { organizationId: context.organizationId, productionOrderId: order.id },
           select: { orderProcessId: true, quantity: true, entryDate: true },

@@ -485,9 +485,10 @@ export function evaluateOrderTower(input: {
     processes: ProcessTowerInput[];
     materials?: {
       name: string;
-      quantityPerUnit: number;
+      totalQuantity: number;
       quantityReceived: number;
-      orderProcessIds: string[];
+      /** Quantities used across individual production entries. */
+      entryUsages: number[];
     }[];
   }[];
   entries: DatedEntry[];
@@ -528,17 +529,12 @@ export function evaluateOrderTower(input: {
 
   const materials: OrderMaterialRisk[] = [];
   for (const line of input.lines) {
-    const lineEval = lines.find((row) => row.lineId === line.lineId);
-    const cumByProcess = new Map(
-      (lineEval?.processes ?? []).map((process) => [process.orderProcessId, process.cumulative]),
-    );
     for (const material of line.materials ?? []) {
       const usage = evaluateMaterialUsage({
         name: material.name,
-        quantityPerUnit: material.quantityPerUnit,
+        totalQuantity: material.totalQuantity,
         quantityReceived: material.quantityReceived,
-        lineQuantity: line.quantity,
-        stageCumulatives: material.orderProcessIds.map((id) => cumByProcess.get(id) ?? 0),
+        entryUsages: material.entryUsages,
       });
       materials.push({
         ...usage,

@@ -3,7 +3,7 @@ import { requireTenantContext } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { loadPlantScope } from "@/lib/plants/access";
 import { canRecordProduction, plantIdsForQuery } from "@/lib/plants/scope";
-import { buildEntryLinesByOrder } from "@/lib/production/entry-form-data";
+import { buildEntryLinesByOrder, buildMaterialsByOrder } from "@/lib/production/entry-form-data";
 import { ProductionEntryForm } from "@/components/production/production-entry-form";
 import { SavedBanner } from "@/components/ui/saved-banner";
 
@@ -45,6 +45,9 @@ export default async function NewEntryPage({
             select: { id: true, sequence: true, processName: true },
             orderBy: { sequence: "asc" },
           },
+          materials: {
+            select: { id: true, name: true, totalQuantity: true },
+          },
         },
         orderBy: { lineNumber: "asc" },
       },
@@ -55,6 +58,12 @@ export default async function NewEntryPage({
   });
 
   const linesByOrder = buildEntryLinesByOrder(orders);
+  const materialsByOrder = buildMaterialsByOrder(
+    orders.map((order) => ({
+      id: order.id,
+      materials: order.lines.flatMap((line) => line.materials),
+    })),
+  );
   const activitiesByOrder = Object.fromEntries(
     orders.map((order) => [
       order.id,
@@ -75,6 +84,7 @@ export default async function NewEntryPage({
         orders={orders.map((order) => ({ id: order.id, orderNumber: order.orderNumber }))}
         linesByOrder={linesByOrder}
         activitiesByOrder={activitiesByOrder}
+        materialsByOrder={materialsByOrder}
         showBackToList
       />
     </main>

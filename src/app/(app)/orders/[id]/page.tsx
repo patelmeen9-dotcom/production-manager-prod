@@ -9,7 +9,7 @@ import { formatDateOnly } from "@/lib/orders/date-rules";
 import { evaluateMaterialUsage } from "@/lib/orders/materials";
 import { evaluateOrganizationOrders } from "@/lib/production/evaluate-orders";
 import { displayStatusLabel, type DisplayStatus } from "@/lib/production/engine";
-import { buildEntryLinesByOrder } from "@/lib/production/entry-form-data";
+import { buildEntryLinesByOrder, buildMaterialsByOrder } from "@/lib/production/entry-form-data";
 import { ProductionEntryForm } from "@/components/production/production-entry-form";
 import { SpecialActivityEntryForm } from "@/components/production/special-activity-entry-form";
 import { SavedBanner } from "@/components/ui/saved-banner";
@@ -71,7 +71,9 @@ export default async function OrderDetailPage({
             },
           },
           materials: {
-            include: { stages: true },
+            include: {
+              entryUsages: { select: { quantityUsed: true } },
+            },
           },
         },
         orderBy: { lineNumber: "asc" },
@@ -90,6 +92,9 @@ export default async function OrderDetailPage({
             include: { orderLine: { include: { product: { select: { name: true } } } } },
           },
           specialActivity: true,
+          materialUsages: {
+            include: { material: { select: { name: true } } },
+          },
         },
         orderBy: [{ entryDate: "desc" }, { createdAt: "desc" }],
         take: 50,
@@ -125,10 +130,6 @@ export default async function OrderDetailPage({
     asOfDate: asOf,
   });
   const evaluation = evaluations.get(order.id);
-  const entrySums = new Map<string, number>();
-  for (const entry of order.productionEntries) {
-    entrySums.set(entry.orderProcessId, (entrySums.get(entry.orderProcessId) ?? 0) + entry.quantity);
-  }
 
   const requestedActivities = order.requestedSpecialActivities.map((row) => ({
     id: row.specialActivity.id,
@@ -137,18 +138,18 @@ export default async function OrderDetailPage({
   const manage = canManageMasters(context.role);
   const status = evaluation?.displayStatus ?? "NOT_STARTED";
 
-  const materialRows = order.lines.flatMap((line) =>
-    line.materials.map((material) => {
-      const usage = evaluateMaterialUsage({
-        name: material.name,
-        quantityPerUnit: material.quantityPerUnit,
-        quantityReceived: material.quantityReceived,
-        lineQuantity: line.quantity,
-        stageCumulatives: material.stages.map((stage) => entrySums.get(stage.orderProcessId) ?? 0),
-      });
-      return { line, material, usage };
-    }),
-  );
+  // Collect all order-level materials (stored on lines, treated as order-scoped)
+  const allMaterials = order.lines.flatMap((line) => line.materials);
+
+  const materialRows = allMaterials.map((material) => {
+    const usage = evaluateMaterialUsage({
+      name: material.name,
+      totalQuantity: material.totalQuantity,
+      quantityReceived: material.quantityReceived,
+      entryUsages: material.entryUsages.map((u) => u.quantityUsed),
+    });
+    return { material, usage };
+  });
   const materialWarnings = materialRows.map((row) => row.usage.warning).filter((warning): warning is string => Boolean(warning));
 
   return (
@@ -232,26 +233,22 @@ export default async function OrderDetailPage({
         <section className="overflow-hidden rounded border border-line bg-panel">
           <div className="border-b border-line px-4 py-3">
             <h2 className="text-[13px] font-semibold text-ink">Materials</h2>
+            <p className="text-[11px] text-ink-soft">Order-level material requirements and usage.</p>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-[13px]">
               <thead className="border-b border-line bg-panel-muted text-[10.5px] font-semibold uppercase tracking-wide text-ink-soft">
                 <tr>
-                  <th className="px-3 py-2.5">Line / product</th>
                   <th className="px-3 py-2.5">Material</th>
-                  <th className="px-3 py-2.5 text-right">Needed</th>
+                  <th className="px-3 py-2.5 text-right">Total required</th>
                   <th className="px-3 py-2.5 text-right">Received</th>
                   <th className="px-3 py-2.5 text-right">Used</th>
                   <th className="px-3 py-2.5 text-right">Available</th>
                 </tr>
               </thead>
               <tbody>
-                {materialRows.map(({ line, material, usage }) => (
+                {materialRows.map(({ material, usage }) => (
                   <tr key={material.id} className="border-b border-line last:border-0">
-                    <td className="px-3 py-2.5 text-ink">
-                      {line.product.name}{" "}
-                      <span className="font-mono text-ink-soft">#{line.lineNumber}</span>
-                    </td>
                     <td className="px-3 py-2.5 text-ink">{material.name}</td>
                     <td className="px-3 py-2.5 text-right font-mono text-ink-soft">{usage.totalNeeded}</td>
                     <td className="px-3 py-2.5 text-right font-mono text-ink-soft">{material.quantityReceived}</td>
@@ -335,6 +332,7 @@ export default async function OrderDetailPage({
                   <th className="px-3 py-2.5">Stage</th>
                   <th className="px-3 py-2.5">Special activity</th>
                   <th className="px-3 py-2.5 text-right">Qty</th>
+                  {allMaterials.length > 0 ? <th className="px-3 py-2.5">Material used</th> : null}
                   <th className="px-3 py-2.5">User</th>
                 </tr>
               </thead>
@@ -346,6 +344,15 @@ export default async function OrderDetailPage({
                     <td className="px-3 py-2.5 text-ink">{entry.orderProcess.processName}</td>
                     <td className="px-3 py-2.5 text-ink-soft">{entry.specialActivity?.name ?? "—"}</td>
                     <td className="px-3 py-2.5 text-right font-mono text-ink">{entry.quantity}</td>
+                    {allMaterials.length > 0 ? (
+                      <td className="px-3 py-2.5 text-ink-soft">
+                        {entry.materialUsages.length > 0
+                          ? entry.materialUsages
+                              .map((mu) => `${mu.material.name}: ${mu.quantityUsed}`)
+                              .join(", ")
+                          : "—"}
+                      </td>
+                    ) : null}
                     <td className="px-3 py-2.5 text-ink-soft">{entry.createdBy.name}</td>
                   </tr>
                 ))}
@@ -376,6 +383,16 @@ export default async function OrderDetailPage({
                 label: activity.name,
               })),
             }}
+            materialsByOrder={buildMaterialsByOrder([
+              {
+                id: order.id,
+                materials: allMaterials.map((m) => ({
+                  id: m.id,
+                  name: m.name,
+                  totalQuantity: m.totalQuantity,
+                })),
+              },
+            ])}
             showBackToList={false}
           />
           <h2 className="text-[13px] font-semibold text-ink">Special activity / rework (legacy form)</h2>

@@ -1,4 +1,4 @@
-import { buildProductCategoryMatrix, formatMatrixCell, type LineForTable } from "@/lib/orders/line-table";
+import { buildLineTable, type LineForTable } from "@/lib/orders/line-table";
 
 export function csvEscape(value: string | number | null | undefined): string {
   const text = value == null ? "" : String(value);
@@ -32,20 +32,20 @@ export function buildOrderLinesCsv(input: {
   includeOrderColumns: boolean;
 }): string {
   const allLines = input.orders.flatMap((order) => order.lines);
-  const columns = buildProductCategoryMatrix(allLines).columns;
+  const columns = buildLineTable(allLines).columns;
   const header = [
     ...(input.includeOrderColumns
       ? ["Order", "Client", "Plant", "Order date", "Start", "Due", "Status"]
       : []),
     "Product",
     ...columns.map((column) => column.name),
-    "Total",
+    "Quantity",
   ];
 
   const rows: (string | number | null)[][] = [header];
   for (const order of input.orders) {
-    const matrix = buildProductCategoryMatrix(order.lines);
-    if (matrix.rows.length === 0 && input.includeOrderColumns) {
+    const table = buildLineTable(order.lines);
+    if (table.rows.length === 0 && input.includeOrderColumns) {
       rows.push([
         order.orderNumber,
         order.clientName,
@@ -60,26 +60,26 @@ export function buildOrderLinesCsv(input: {
       ]);
       continue;
     }
-    for (const row of matrix.rows) {
+    for (const row of table.rows) {
       rows.push([
         ...(input.includeOrderColumns
           ? [
-              order.orderNumber,
-              order.clientName,
-              order.plantName,
-              order.orderDate,
-              order.startDate,
-              order.dueDate,
-              order.lifecycleStatus,
-            ]
+            order.orderNumber,
+            order.clientName,
+            order.plantName,
+            order.orderDate,
+            order.startDate,
+            order.dueDate,
+            order.lifecycleStatus,
+          ]
           : []),
         row.productName,
-        ...columns.map((column) => formatMatrixCell(row.cells[column.id])),
-        row.total,
+        ...columns.map((column) => row.categoryValues[column.id] ?? "-"),
+        row.quantity,
       ]);
     }
     if (!input.includeOrderColumns) {
-      rows.push(["Total order quantity", ...columns.map(() => ""), matrix.orderTotal]);
+      rows.push(["Total order quantity", ...columns.map(() => ""), table.orderTotal]);
     }
   }
   return toCsv(rows);
