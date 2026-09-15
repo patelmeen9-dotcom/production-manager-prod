@@ -12,7 +12,8 @@ import { PrismaClient } from "@prisma/client";
 // `ws` is imported forces it to use its pure-JS (de)masking implementation,
 // which is slightly slower but always correct and has no native dependency.
 process.env.WS_NO_BUFFER_UTIL = "1";
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const ws = require("ws");
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
