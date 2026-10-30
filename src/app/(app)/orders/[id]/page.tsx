@@ -9,7 +9,7 @@ import { formatDateOnly } from "@/lib/orders/date-rules";
 import { evaluateMaterialUsage } from "@/lib/orders/materials";
 import { evaluateOrganizationOrders } from "@/lib/production/evaluate-orders";
 import { displayStatusLabel, type DisplayStatus } from "@/lib/production/engine";
-import { buildEntryLinesByOrder, buildMaterialsByOrder } from "@/lib/production/entry-form-data";
+import { buildDispatchByOrder, buildEntryLinesByOrder, buildMaterialsByOrder, buildProgressByOrder } from "@/lib/production/entry-form-data";
 import { ProductionEntryForm } from "@/components/production/production-entry-form";
 import { SpecialActivityEntryForm } from "@/components/production/special-activity-entry-form";
 import { SavedBanner } from "@/components/ui/saved-banner";
@@ -107,6 +107,13 @@ export default async function OrderDetailPage({
       attachments: {
         orderBy: { createdAt: "asc" },
       },
+      dispatchEntries: {
+        include: {
+          createdBy: { select: { name: true } },
+          orderLine: { include: { product: { select: { name: true } } } },
+        },
+        orderBy: [{ entryDate: "desc" }, { createdAt: "desc" }],
+      },
     },
   });
   if (!order) {
@@ -115,6 +122,47 @@ export default async function OrderDetailPage({
   await requireGrantedPlant(context, order.plantId);
 
   const asOf = new Date();
+  const productionForDispatch = await prisma.productionEntry.findMany({
+    where: { organizationId: context.organizationId, productionOrderId: order.id },
+    select: { orderProcessId: true, quantity: true },
+  });
+  const progressByOrder = buildProgressByOrder([
+    {
+      id: order.id,
+      lines: order.lines.map((line) => ({
+        id: line.id,
+        quantity: line.quantity,
+        product: line.product,
+        processes: order.processes
+          .filter((process) => process.productionOrderLineId === line.id)
+          .map((process) => ({
+            id: process.id,
+            sequence: process.sequence,
+            processName: process.processName,
+            plannedQuantity: process.plannedQuantity,
+          })),
+      })),
+      productionEntries: productionForDispatch,
+    },
+  ]);
+  const dispatchByOrder = buildDispatchByOrder([
+    {
+      id: order.id,
+      lines: order.lines.map((line) => ({
+        id: line.id,
+        quantity: line.quantity,
+        processes: order.processes
+          .filter((process) => process.productionOrderLineId === line.id)
+          .map((process) => ({
+            id: process.id,
+            sequence: process.sequence,
+            plannedQuantity: process.plannedQuantity,
+          })),
+      })),
+      productionEntries: productionForDispatch,
+      dispatchEntries: order.dispatchEntries,
+    },
+  ]);
   const evaluations = await evaluateOrganizationOrders({
     organizationId: context.organizationId,
     orders: [
@@ -167,6 +215,7 @@ export default async function OrderDetailPage({
           </div>
           <p className="mt-1 text-sm text-ink-soft">
             {order.client.name} · {order.plant.name}
+            {order.clientWorkOrderNumber ? ` · Client WO ${order.clientWorkOrderNumber}` : ""}
             {order.priority !== "NORMAL" ? ` · ${order.priority}` : ""}
           </p>
         </div>
@@ -198,7 +247,11 @@ export default async function OrderDetailPage({
 
       <section className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Total quantity" value={String(order.quantity)} />
+        <Stat label="Our order number" value={order.orderNumber} />
+        <Stat label="Client work order" value={order.clientWorkOrderNumber ?? "—"} />
         <Stat label="Order date" value={formatDateOnly(order.orderDate)} />
+        <Stat label="Production date" value={order.productionDate ? formatDateOnly(order.productionDate) : "—"} />
+        <Stat label="Dispatch date" value={order.dispatchDate ? formatDateOnly(order.dispatchDate) : "—"} />
         <Stat label="Production start" value={formatDateOnly(order.effectiveStartDate)} />
         <Stat label="Due date" value={formatDateOnly(order.resolvedDueDate)} />
         <Stat
@@ -208,6 +261,10 @@ export default async function OrderDetailPage({
         <Stat label="Pending" value={evaluation ? String(evaluation.remainingQuantity) : "—"} />
         <Stat label="Progress" value={evaluation ? `${evaluation.progressPercent.toFixed(1)}%` : "—"} />
         <Stat label="Current stage" value={evaluation?.currentStageName ?? "—"} />
+        <Stat
+          label="Dispatched"
+          value={`${order.dispatchEntries.reduce((sum, row) => sum + row.quantity, 0)} / ${order.quantity}`}
+        />
       </section>
 
       <section className="overflow-hidden rounded border border-line bg-panel">
@@ -362,12 +419,54 @@ export default async function OrderDetailPage({
         )}
       </section>
 
+      <section className="overflow-hidden rounded border border-line bg-panel">
+        <div className="border-b border-line px-4 py-3">
+          <h2 className="text-[13px] font-semibold text-ink">Dispatch history</h2>
+        </div>
+        {order.dispatchEntries.length === 0 ? (
+          <p className="p-4 text-sm text-ink-faint">No dispatch recorded yet. Available in daily entry after every production step is complete.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-[13px]">
+              <thead className="border-b border-line bg-panel-muted text-[10.5px] font-semibold uppercase tracking-wide text-ink-soft">
+                <tr>
+                  <th className="px-3 py-2.5">Date</th>
+                  <th className="px-3 py-2.5">Scope</th>
+                  <th className="px-3 py-2.5 text-right">Qty</th>
+                  <th className="px-3 py-2.5">Remarks</th>
+                  <th className="px-3 py-2.5">User</th>
+                </tr>
+              </thead>
+              <tbody>
+                {order.dispatchEntries.map((entry) => (
+                  <tr key={entry.id} className="border-b border-line last:border-0">
+                    <td className="px-3 py-2.5 font-mono text-ink-soft">{formatDateOnly(entry.entryDate)}</td>
+                    <td className="px-3 py-2.5 text-ink">
+                      {entry.orderLine?.product.name ?? "Entire order"}
+                    </td>
+                    <td className="px-3 py-2.5 text-right font-mono text-ink">{entry.quantity}</td>
+                    <td className="px-3 py-2.5 text-ink-soft">{entry.remarks ?? "—"}</td>
+                    <td className="px-3 py-2.5 text-ink-soft">{entry.createdBy.name}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       {canRecordProduction(context.role) ? (
         <section className="space-y-4 rounded border border-line bg-panel p-4">
           <h2 className="text-[13px] font-semibold text-ink">Add incremental production</h2>
           <ProductionEntryForm
             defaultOrderId={order.id}
-            orders={[{ id: order.id, orderNumber: order.orderNumber }]}
+            orders={[{
+              id: order.id,
+              orderNumber: order.orderNumber,
+              clientWorkOrderNumber: order.clientWorkOrderNumber,
+              productionDate: order.productionDate ? formatDateOnly(order.productionDate) : null,
+              dispatchDate: order.dispatchDate ? formatDateOnly(order.dispatchDate) : null,
+            }]}
             linesByOrder={buildEntryLinesByOrder([
               {
                 id: order.id,
@@ -393,6 +492,8 @@ export default async function OrderDetailPage({
                 })),
               },
             ])}
+            dispatchByOrder={dispatchByOrder}
+            progressByOrder={progressByOrder}
             showBackToList={false}
           />
           <h2 className="text-[13px] font-semibold text-ink">Special activity / rework (legacy form)</h2>

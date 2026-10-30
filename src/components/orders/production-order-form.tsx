@@ -208,7 +208,8 @@ export function ProductionOrderForm(props: {
             ))}
           </select>
         </div>
-        <TextField name="orderNumber" label="Project / order number" required />
+        <TextField name="orderNumber" label="Our order number" />
+        <TextField name="clientWorkOrderNumber" label="Client work order number" />
         <div>
           <Label htmlFor="plantId">Plant</Label>
           <select
@@ -243,6 +244,13 @@ export function ProductionOrderForm(props: {
           </select>
         </div>
         <TextField name="orderDate" label="Order date" type="date" required />
+        <TextField name="productionDate" label="Production date" type="date" />
+        <TextField name="dispatchDate" label="Dispatch date" type="date" />
+        <FormFull>
+          <p className="text-xs text-slate-500">
+            Our order number, client work order number, production date, and dispatch date are optional. A unique order number is generated if ours is left blank.
+          </p>
+        </FormFull>
         <div>
           <Label htmlFor="startDateType">Production start</Label>
           <select

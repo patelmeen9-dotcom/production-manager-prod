@@ -3,7 +3,13 @@ import { requireTenantContext } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { loadPlantScope } from "@/lib/plants/access";
 import { canRecordProduction, plantIdsForQuery } from "@/lib/plants/scope";
-import { buildEntryLinesByOrder, buildMaterialsByOrder } from "@/lib/production/entry-form-data";
+import { formatDateOnly } from "@/lib/orders/date-rules";
+import {
+  buildDispatchByOrder,
+  buildEntryLinesByOrder,
+  buildMaterialsByOrder,
+  buildProgressByOrder,
+} from "@/lib/production/entry-form-data";
 import { ProductionEntryForm } from "@/components/production/production-entry-form";
 import { SavedBanner } from "@/components/ui/saved-banner";
 
@@ -42,7 +48,7 @@ export default async function NewEntryPage({
             },
           },
           processes: {
-            select: { id: true, sequence: true, processName: true },
+            select: { id: true, sequence: true, processName: true, plannedQuantity: true },
             orderBy: { sequence: "asc" },
           },
           materials: {
@@ -52,12 +58,16 @@ export default async function NewEntryPage({
         orderBy: { lineNumber: "asc" },
       },
       requestedSpecialActivities: { include: { specialActivity: true } },
+      productionEntries: { select: { orderProcessId: true, quantity: true } },
+      dispatchEntries: { select: { quantity: true, productionOrderLineId: true } },
     },
     orderBy: { createdAt: "desc" },
     take: 100,
   });
 
   const linesByOrder = buildEntryLinesByOrder(orders);
+  const progressByOrder = buildProgressByOrder(orders);
+  const dispatchByOrder = buildDispatchByOrder(orders);
   const materialsByOrder = buildMaterialsByOrder(
     orders.map((order) => ({
       id: order.id,
@@ -81,9 +91,17 @@ export default async function NewEntryPage({
       <h1 className="text-2xl font-semibold text-white">Daily production entry</h1>
       <SavedBanner message={params.saved} />
       <ProductionEntryForm
-        orders={orders.map((order) => ({ id: order.id, orderNumber: order.orderNumber }))}
+        orders={orders.map((order) => ({
+          id: order.id,
+          orderNumber: order.orderNumber,
+          clientWorkOrderNumber: order.clientWorkOrderNumber,
+          productionDate: order.productionDate ? formatDateOnly(order.productionDate) : null,
+          dispatchDate: order.dispatchDate ? formatDateOnly(order.dispatchDate) : null,
+        }))}
         linesByOrder={linesByOrder}
+        progressByOrder={progressByOrder}
         activitiesByOrder={activitiesByOrder}
+        dispatchByOrder={dispatchByOrder}
         materialsByOrder={materialsByOrder}
         showBackToList
       />

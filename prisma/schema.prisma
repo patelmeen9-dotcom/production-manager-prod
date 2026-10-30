@@ -49,6 +49,7 @@ model Organization {
   productionEntries ProductionEntry[]
   productionEntryMaterialUsages ProductionEntryMaterialUsage[]
   specialActivityEntries SpecialActivityEntry[]
+  dispatchEntries DispatchEntry[]
   auditLogs AuditLog[]
   importJobs ImportJob[]
   orderAttachments ProductionOrderAttachment[]
@@ -74,6 +75,7 @@ model User {
   createdOrders ProductionOrder[]
   productionEntries ProductionEntry[]
   specialActivityEntries SpecialActivityEntry[]
+  dispatchEntries DispatchEntry[]
   auditLogs AuditLog[]
   importJobs ImportJob[]
 
@@ -99,6 +101,7 @@ model Plant {
   productionOrders ProductionOrder[]
   productionEntries ProductionEntry[]
   specialActivityEntries SpecialActivityEntry[]
+  dispatchEntries DispatchEntry[]
 
   @@unique([organizationId, code])
   @@unique([organizationId, name])
@@ -342,9 +345,15 @@ model ProductionOrder {
   productId          String
   createdByUserId    String
   orderNumber        String
+  /// Client's work-order / PO reference. Optional display field.
+  clientWorkOrderNumber String?
   /// Denormalized total = sum of ProductionOrderLine.quantity. Not manually entered.
   quantity           Int
   orderDate          DateTime             @db.Date
+  /// Optional planned or recorded production date (informational).
+  productionDate     DateTime?            @db.Date
+  /// Optional planned dispatch date (informational; actual dispatch uses DispatchEntry).
+  dispatchDate       DateTime?            @db.Date
   startDateType      DateInputType        @default(NONE)
   startDate          DateTime?            @db.Date
   startDays          Int?
@@ -371,6 +380,7 @@ model ProductionOrder {
   requestedSpecialActivities ProductionOrderSpecialActivity[]
   productionEntries ProductionEntry[]
   specialActivityEntries SpecialActivityEntry[]
+  dispatchEntries DispatchEntry[]
   attachments  ProductionOrderAttachment[]
 
   @@unique([organizationId, orderNumber])
@@ -380,6 +390,8 @@ model ProductionOrder {
   @@index([organizationId, lifecycleStatus])
   @@index([organizationId, effectiveStartDate])
   @@index([organizationId, resolvedDueDate])
+  @@index([organizationId, productionDate], map: "ProductionOrder_org_productionDate_idx")
+  @@index([organizationId, dispatchDate], map: "ProductionOrder_org_dispatchDate_idx")
 }
 
 enum AttachmentFileType {
@@ -422,6 +434,7 @@ model ProductionOrderLine {
   processes       ProductionOrderProcess[]
   categorySelections ProductionOrderLineCategorySelection[]
   materials       ProductionOrderLineMaterial[]
+  dispatchEntries DispatchEntry[]
 
   @@unique([productionOrderId, lineNumber])
   @@index([organizationId, productionOrderId])
@@ -570,6 +583,32 @@ model ProductionEntry {
   @@index([organizationId, createdAt], map: "pe_org_created_idx")
   @@index([organizationId, entryDate(sort: Desc), createdAt(sort: Desc)], map: "ProductionEntry_org_date_created_idx")
   @@index([organizationId, specialActivityId])
+}
+
+/// Incremental quantity dispatched after production steps are complete. Never a cumulative total.
+model DispatchEntry {
+  id                    String   @id @default(cuid())
+  organizationId        String
+  plantId               String
+  productionOrderId     String
+  /// Null means the quantity is dispatched against the whole remaining order.
+  productionOrderLineId String?
+  entryDate             DateTime @db.Date
+  quantity              Int
+  remarks               String?
+  createdByUserId       String
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  organization    Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  plant           Plant                @relation(fields: [plantId], references: [id], onDelete: Restrict)
+  productionOrder ProductionOrder      @relation(fields: [productionOrderId], references: [id], onDelete: Restrict)
+  orderLine       ProductionOrderLine? @relation(fields: [productionOrderLineId], references: [id], onDelete: Restrict)
+  createdBy       User                 @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, productionOrderId], map: "de_org_order_idx")
+  @@index([organizationId, plantId, entryDate], map: "de_org_plant_date_idx")
+  @@index([organizationId, productionOrderLineId], map: "de_org_line_idx")
 }
 
 /// Auxiliary / rework recording. Does not rewrite production history.

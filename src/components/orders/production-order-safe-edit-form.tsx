@@ -8,6 +8,9 @@ import { TextField } from "@/components/masters/fields";
 export function ProductionOrderSafeEditForm(props: {
   orderId: string;
   remarks: string | null;
+  clientWorkOrderNumber: string | null;
+  productionDate: string;
+  dispatchDate: string;
   priority: string;
   lines: { id: string; label: string; remarks: string | null }[];
   materials: { id: string; label: string; quantityReceived: number; totalNeeded: number }[];
@@ -40,6 +43,9 @@ export function ProductionOrderSafeEditForm(props: {
             <option value="URGENT">Urgent</option>
           </select>
         </div>
+        <TextField name="clientWorkOrderNumber" label="Client work order number" defaultValue={props.clientWorkOrderNumber ?? ""} />
+        <TextField name="productionDate" label="Production date" type="date" defaultValue={props.productionDate} />
+        <TextField name="dispatchDate" label="Dispatch date" type="date" defaultValue={props.dispatchDate} />
         <FormFull>
           <TextField name="remarks" label="Order remarks" defaultValue={props.remarks ?? ""} />
         </FormFull>

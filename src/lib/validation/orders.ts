@@ -36,10 +36,13 @@ export const productionOrderLineSchema = z.object({
 export const productionOrderSchema = z
   .object({
     clientId: z.string().min(1, "Client is required."),
-    orderNumber: z.string().trim().min(1, "Order number is required.").max(80),
+    orderNumber: z.string().trim().max(80).optional().or(z.literal("")),
+    clientWorkOrderNumber: z.string().trim().max(80).optional().or(z.literal("")),
     plantId: z.string().min(1, "Plant is required."),
     lines: z.array(productionOrderLineSchema).min(1, "Add at least one order line."),
     orderDate: z.string().min(1, "Order date is required."),
+    productionDate: z.string().optional().or(z.literal("")),
+    dispatchDate: z.string().optional().or(z.literal("")),
     startDateType: z.enum(["NONE", "FIXED_DATE", "DAYS_FROM_ORDER"]),
     startDate: z.string().optional().or(z.literal("")),
     startDays: z.string().optional().or(z.literal("")),
@@ -83,6 +86,9 @@ export const orderLineQuantityEditSchema = z.object({
 /** Safe edit: remarks + material received quantities only when production has started. */
 export const productionOrderSafeEditSchema = z.object({
   remarks: z.string().trim().max(1000).optional().or(z.literal("")),
+  clientWorkOrderNumber: z.string().trim().max(80).optional().or(z.literal("")),
+  productionDate: z.string().optional().or(z.literal("")),
+  dispatchDate: z.string().optional().or(z.literal("")),
   priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]),
   lineRemarks: z.array(
     z.object({

@@ -8,6 +8,7 @@ export type StatusGroup =
   | "on_time"
   | "not_started"
   | "completed"
+  | "dispatched"
   | "total";
 
 /** Maps Control Tower order statuses into filterable KPI groups. */
@@ -17,10 +18,11 @@ export const TOWER_STATUS_GROUP: Record<Exclude<StatusGroup, "total" | "on_time"
   in_production: ["IN_PRODUCTION"],
   not_started: ["NOT_STARTED"],
   completed: ["COMPLETED"],
+  dispatched: ["DISPATCHED"],
 };
 
 /** Legacy engine display-status mapping (kept for older callers). */
-export const STATUS_GROUP_STATUSES: Record<Exclude<StatusGroup, "total" | "in_production">, DisplayStatus[]> = {
+export const STATUS_GROUP_STATUSES: Record<Exclude<StatusGroup, "total" | "in_production" | "dispatched">, DisplayStatus[]> = {
   delayed: ["DELAYED", "START_DELAYED"],
   getting_delayed: ["GETTING_DELAYED", "START_WARNING"],
   on_time: ["ON_TIME"],
@@ -39,6 +41,7 @@ export function parseStatusGroup(value: string | undefined): StatusGroup | undef
     value === "on_time" ||
     value === "not_started" ||
     value === "completed" ||
+    value === "dispatched" ||
     value === "total"
   ) {
     return value;
@@ -65,6 +68,9 @@ export function matchesStatusGroup(status: DisplayStatus, group: StatusGroup | u
   }
   if (group === "in_production") {
     return status === "ON_TIME";
+  }
+  if (group === "dispatched") {
+    return false;
   }
   return STATUS_GROUP_STATUSES[group].includes(status);
 }

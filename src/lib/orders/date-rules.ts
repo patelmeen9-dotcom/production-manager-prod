@@ -2,6 +2,13 @@ import { AppError } from "@/lib/errors";
 
 export type DateInputType = "FIXED_DATE" | "DAYS_FROM_ORDER" | "DAYS_FROM_START" | "NONE";
 
+export function parseOptionalDateOnly(value: string | undefined | null): Date | null {
+  if (!value || !value.trim()) {
+    return null;
+  }
+  return parseDateOnly(value);
+}
+
 export function parseDateOnly(value: string): Date {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
   if (!match) {

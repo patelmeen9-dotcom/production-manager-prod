@@ -5,7 +5,7 @@ import { prisma } from "@/lib/db";
 import { requireGrantedPlant } from "@/lib/plants/access";
 import { canRecordProduction } from "@/lib/plants/scope";
 import { formatDateOnly } from "@/lib/orders/date-rules";
-import { buildEntryLinesByOrder, buildMaterialsByOrder } from "@/lib/production/entry-form-data";
+import { buildEntryLinesByOrder, buildMaterialsByOrder, buildProgressByOrder } from "@/lib/production/entry-form-data";
 import { updateProductionEntryAction } from "@/lib/production/actions";
 import { ProductionEntryForm } from "@/components/production/production-entry-form";
 import { SavedBanner } from "@/components/ui/saved-banner";
@@ -41,7 +41,7 @@ export default async function EditEntryPage({
                 },
               },
               processes: {
-                select: { id: true, sequence: true, processName: true },
+                select: { id: true, sequence: true, processName: true, plannedQuantity: true },
                 orderBy: { sequence: "asc" },
               },
               materials: {
@@ -51,6 +51,7 @@ export default async function EditEntryPage({
             orderBy: { lineNumber: "asc" },
           },
           requestedSpecialActivities: { include: { specialActivity: true } },
+          productionEntries: { select: { orderProcessId: true, quantity: true } },
         },
       },
     },
@@ -61,6 +62,7 @@ export default async function EditEntryPage({
   await requireGrantedPlant(context, entry.plantId);
   const order = entry.productionOrder;
   const linesByOrder = buildEntryLinesByOrder([order]);
+  const progressByOrder = buildProgressByOrder([order]);
   const materialsByOrder = buildMaterialsByOrder([
     {
       id: order.id,
@@ -73,8 +75,15 @@ export default async function EditEntryPage({
       <h1 className="text-2xl font-semibold text-white">Edit production entry</h1>
       <SavedBanner message={query.saved} />
       <ProductionEntryForm
-        orders={[{ id: order.id, orderNumber: order.orderNumber }]}
+        orders={[{
+          id: order.id,
+          orderNumber: order.orderNumber,
+          clientWorkOrderNumber: order.clientWorkOrderNumber,
+          productionDate: order.productionDate ? formatDateOnly(order.productionDate) : null,
+          dispatchDate: order.dispatchDate ? formatDateOnly(order.dispatchDate) : null,
+        }]}
         linesByOrder={linesByOrder}
+        progressByOrder={progressByOrder}
         materialsByOrder={materialsByOrder}
         entry={{
           id: entry.id,

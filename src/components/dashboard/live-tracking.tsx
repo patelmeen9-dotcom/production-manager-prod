@@ -34,12 +34,14 @@ export type LiveLineRow = {
 export type LiveOrderRow = {
   id: string;
   orderNumber: string;
+  clientWorkOrderNumber: string | null;
   clientName: string;
   productName: string;
   plantName: string;
   quantity: number;
   completedQuantity: number;
   remainingQuantity: number;
+  dispatchedQuantity: number;
   progressPercent: number;
   currentStageName: string | null;
   dueDate: string;
@@ -56,6 +58,7 @@ const ORDER_STATUS_STYLE: Record<OrderTowerStatus, string> = {
   DELAYED: "bg-delayed-bg text-delayed",
   NOT_STARTED: "bg-accent-bg text-ink-soft",
   COMPLETED: "bg-accent-bg text-ink-soft",
+  DISPATCHED: "bg-on-time-bg text-on-time",
   CANCELLED: "bg-panel-muted text-ink-faint",
   ON_HOLD: "bg-panel-muted text-ink-faint",
 };
@@ -130,9 +133,10 @@ export function LiveTrackingTable(props: { rows: LiveOrderRow[] }) {
   return (
     <div className="overflow-x-auto">
       <div className="min-w-[980px]">
-        <div className="grid grid-cols-[20px_110px_1.2fr_1fr_80px_120px_90px_160px] gap-3 border-b border-line px-3.5 py-2 text-[10.5px] font-semibold tracking-wide text-ink-soft">
+        <div className="grid grid-cols-[20px_100px_90px_1.1fr_1fr_70px_110px_80px_150px] gap-3 border-b border-line px-3.5 py-2 text-[10.5px] font-semibold tracking-wide text-ink-soft">
           <span />
           <span>Order</span>
+          <span>Client WO</span>
           <span>Client</span>
           <span>Product</span>
           <span>Qty</span>
@@ -147,7 +151,7 @@ export function LiveTrackingTable(props: { rows: LiveOrderRow[] }) {
             <div key={row.id} className={`border-b border-line ${flagged ? "bg-delayed-bg/40" : ""}`}>
               <button
                 type="button"
-                className="grid w-full grid-cols-[20px_110px_1.2fr_1fr_80px_120px_90px_160px] items-center gap-3 px-3.5 py-2.5 text-left text-[13px] hover:bg-panel-muted"
+                className="grid w-full grid-cols-[20px_100px_90px_1.1fr_1fr_70px_110px_80px_150px] items-center gap-3 px-3.5 py-2.5 text-left text-[13px] hover:bg-panel-muted"
                 onClick={() => setExpandedId(expanded ? null : row.id)}
               >
                 <span className="text-ink-soft">
@@ -160,6 +164,7 @@ export function LiveTrackingTable(props: { rows: LiveOrderRow[] }) {
                 >
                   {row.orderNumber}
                 </Link>
+                <span className="truncate font-mono text-[12px] text-ink-soft">{row.clientWorkOrderNumber || "—"}</span>
                 <span className="truncate text-ink">{row.clientName}</span>
                 <span className="truncate text-ink-soft">{row.productName}</span>
                 <span className="font-mono text-ink-soft">{row.quantity}</span>
@@ -203,6 +208,10 @@ export function LiveTrackingTable(props: { rows: LiveOrderRow[] }) {
                     <span>
                       <span className="font-semibold text-ink">Done / pending: </span>
                       {row.completedQuantity} / {row.remainingQuantity}
+                    </span>
+                    <span>
+                      <span className="font-semibold text-ink">Dispatched: </span>
+                      {row.dispatchedQuantity}
                     </span>
                   </div>
                   {row.lines.map((line) => (

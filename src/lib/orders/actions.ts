@@ -7,7 +7,8 @@ import { AppError } from "@/lib/errors";
 import { uniqueConstraintMessage } from "@/lib/db-errors";
 import { requireMasterWriter } from "@/lib/masters/auth";
 import { requireGrantedPlant } from "@/lib/plants/access";
-import { parseDateOnly, resolveDueDate, resolveEffectiveStartDate } from "@/lib/orders/date-rules";
+import { parseDateOnly, parseOptionalDateOnly, resolveDueDate, resolveEffectiveStartDate } from "@/lib/orders/date-rules";
+import { generateOrderNumber } from "@/lib/orders/order-number";
 import { writeAuditLog } from "@/lib/audit/write";
 import {
   orderLineQuantityEditSchema,
@@ -114,10 +115,13 @@ export async function createProductionOrderAction(_prev: FormState, formData: Fo
     }
     const parsed = productionOrderSchema.safeParse({
       clientId: formData.get("clientId"),
-      orderNumber: formData.get("orderNumber"),
+      orderNumber: formData.get("orderNumber") ?? "",
+      clientWorkOrderNumber: formData.get("clientWorkOrderNumber") ?? "",
       plantId: formData.get("plantId"),
       lines,
       orderDate: formData.get("orderDate"),
+      productionDate: formData.get("productionDate") ?? "",
+      dispatchDate: formData.get("dispatchDate") ?? "",
       startDateType: formData.get("startDateType"),
       startDate: formData.get("startDate") ?? "",
       startDays: formData.get("startDays") ?? "",
@@ -187,6 +191,9 @@ export async function createProductionOrderAction(_prev: FormState, formData: Fo
     const primaryProductId = parsed.data.lines[0]!.productId;
 
     const orderDate = parseDateOnly(parsed.data.orderDate);
+    const productionDate = parseOptionalDateOnly(parsed.data.productionDate);
+    const dispatchDate = parseOptionalDateOnly(parsed.data.dispatchDate);
+    const orderNumber = parsed.data.orderNumber?.trim() || generateOrderNumber();
     const startDateType = parsed.data.startDateType as DateInputType;
     const dueDateType = parsed.data.dueDateType as DateInputType;
     const startDate = parsed.data.startDate ? parseDateOnly(parsed.data.startDate) : null;
@@ -216,9 +223,12 @@ export async function createProductionOrderAction(_prev: FormState, formData: Fo
           clientId: client.id,
           productId: primaryProductId,
           createdByUserId: context.userId,
-          orderNumber: parsed.data.orderNumber.trim(),
+          orderNumber,
+          clientWorkOrderNumber: parsed.data.clientWorkOrderNumber?.trim() || null,
           quantity: totalQuantity,
           orderDate,
+          productionDate,
+          dispatchDate,
           startDateType,
           startDate: startDateType === DateInputType.FIXED_DATE ? startDate : null,
           startDays: startDateType === DateInputType.DAYS_FROM_ORDER ? startDays : null,
@@ -374,6 +384,9 @@ export async function updateProductionOrderSafeAction(
     }
     const parsed = productionOrderSafeEditSchema.safeParse({
       remarks: formData.get("remarks") ?? "",
+      clientWorkOrderNumber: formData.get("clientWorkOrderNumber") ?? "",
+      productionDate: formData.get("productionDate") ?? "",
+      dispatchDate: formData.get("dispatchDate") ?? "",
       priority: formData.get("priority"),
       lineRemarks,
       materials,
@@ -399,6 +412,9 @@ export async function updateProductionOrderSafeAction(
         where: { id: order.id },
         data: {
           remarks: parsed.data.remarks || null,
+          clientWorkOrderNumber: parsed.data.clientWorkOrderNumber?.trim() || null,
+          productionDate: parseOptionalDateOnly(parsed.data.productionDate),
+          dispatchDate: parseOptionalDateOnly(parsed.data.dispatchDate),
           priority: parsed.data.priority,
         },
       });

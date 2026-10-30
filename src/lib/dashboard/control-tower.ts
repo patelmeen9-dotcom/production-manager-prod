@@ -22,6 +22,7 @@ export type OrderTowerStatus =
   | "AT_RISK"
   | "DELAYED"
   | "COMPLETED"
+  | "DISPATCHED"
   | "CANCELLED"
   | "ON_HOLD";
 
@@ -95,6 +96,7 @@ export type OrderTowerState = {
   lifecycleStatus: string;
   completedQuantity: number;
   remainingQuantity: number;
+  dispatchedQuantity: number;
   progressPercent: number;
   currentProcessName: string | null;
   /** Projected completion of the final applicable process. */
@@ -137,6 +139,8 @@ export function orderTowerStatusLabel(status: OrderTowerStatus): string {
       return "Delayed";
     case "COMPLETED":
       return "Completed";
+    case "DISPATCHED":
+      return "Dispatched";
     case "CANCELLED":
       return "Cancelled";
     case "ON_HOLD":
@@ -150,8 +154,9 @@ export const ORDER_TOWER_SEVERITY: Record<OrderTowerStatus, number> = {
   NOT_STARTED: 2,
   IN_PRODUCTION: 3,
   COMPLETED: 4,
-  ON_HOLD: 5,
-  CANCELLED: 6,
+  DISPATCHED: 5,
+  ON_HOLD: 6,
+  CANCELLED: 7,
 };
 
 /**
@@ -492,6 +497,7 @@ export function evaluateOrderTower(input: {
     }[];
   }[];
   entries: DatedEntry[];
+  dispatchedQuantity?: number;
 }): OrderTowerState {
   const lines: LineTowerState[] = input.lines.map((line) => {
     const processIds = new Set(line.processes.map((process) => process.id));
@@ -572,10 +578,13 @@ export function evaluateOrderTower(input: {
       ? finalProjectedDates.sort((a, b) => a.getTime() - b.getTime()).at(-1)!
       : null;
 
+  const dispatchedQuantity = input.dispatchedQuantity ?? 0;
   const orderStatus = resolveOrderTowerStatus({
     lifecycleStatus: input.lifecycleStatus,
     productionStarted,
     fullyComplete,
+    dispatchedQuantity,
+    orderQuantity: input.quantity,
     dueDate: input.dueDate,
     asOfDate: input.asOfDate,
     remainingQuantity,
@@ -594,6 +603,7 @@ export function evaluateOrderTower(input: {
     lifecycleStatus: input.lifecycleStatus,
     completedQuantity,
     remainingQuantity,
+    dispatchedQuantity,
     progressPercent,
     currentProcessName: fullyComplete
       ? (applicable[applicable.length - 1]?.processName ?? null)
@@ -611,6 +621,8 @@ export function resolveOrderTowerStatus(input: {
   lifecycleStatus: string;
   productionStarted: boolean;
   fullyComplete: boolean;
+  dispatchedQuantity?: number;
+  orderQuantity?: number;
   dueDate: Date;
   asOfDate: Date;
   remainingQuantity: number;
@@ -622,6 +634,9 @@ export function resolveOrderTowerStatus(input: {
   }
   if (input.lifecycleStatus === "ON_HOLD") {
     return "ON_HOLD";
+  }
+  if (input.fullyComplete && (input.dispatchedQuantity ?? 0) >= (input.orderQuantity ?? 0) && (input.orderQuantity ?? 0) > 0) {
+    return "DISPATCHED";
   }
   if (input.fullyComplete) {
     return "COMPLETED";
@@ -660,7 +675,7 @@ export type ProcessBottleneckRow = {
 export function aggregateProcessBottlenecks(orders: OrderTowerState[]): ProcessBottleneckRow[] {
   const map = new Map<string, ProcessBottleneckRow & { orderIds: Set<string> }>();
   for (const order of orders) {
-    if (order.orderStatus === "CANCELLED" || order.orderStatus === "COMPLETED") {
+    if (order.orderStatus === "CANCELLED" || order.orderStatus === "COMPLETED" || order.orderStatus === "DISPATCHED") {
       continue;
     }
     for (const line of order.lines) {
@@ -950,6 +965,7 @@ export function countOrderStatuses(orders: OrderTowerState[]) {
     atRisk: 0,
     delayed: 0,
     completed: 0,
+    dispatched: 0,
   };
   for (const order of orders) {
     switch (order.orderStatus) {
@@ -967,6 +983,9 @@ export function countOrderStatuses(orders: OrderTowerState[]) {
         break;
       case "COMPLETED":
         counts.completed += 1;
+        break;
+      case "DISPATCHED":
+        counts.dispatched += 1;
         break;
       default:
         break;

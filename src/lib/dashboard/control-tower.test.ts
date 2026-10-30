@@ -161,6 +161,23 @@ describe("resolveOrderTowerStatus", () => {
       }),
     ).toBe("IN_PRODUCTION");
   });
+
+  it("marks DISPATCHED when production is complete and full quantity is dispatched", () => {
+    expect(
+      resolveOrderTowerStatus({
+        lifecycleStatus: "COMPLETED",
+        productionStarted: true,
+        fullyComplete: true,
+        dispatchedQuantity: 100,
+        orderQuantity: 100,
+        dueDate: parseDateOnly("2026-09-20"),
+        asOfDate: parseDateOnly("2026-09-04"),
+        remainingQuantity: 0,
+        projectedCompletionDate: parseDateOnly("2026-09-04"),
+        processes: [],
+      }),
+    ).toBe("DISPATCHED");
+  });
 });
 
 describe("evaluateOrderTower", () => {

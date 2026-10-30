@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { requireMasterWriter } from "@/lib/masters/auth";
 import { prisma } from "@/lib/db";
 import { requireGrantedPlant } from "@/lib/plants/access";
+import { formatDateOnly } from "@/lib/orders/date-rules";
 import { formatOrderLineLabel } from "@/lib/orders/line-label";
 import { ProductionOrderSafeEditForm } from "@/components/orders/production-order-safe-edit-form";
 import { OrderLineQuantityEditForm } from "@/components/orders/order-line-quantity-edit-form";
@@ -50,6 +51,9 @@ export default async function EditOrderPage({ params }: { params: Promise<{ id: 
     <ProductionOrderSafeEditForm
       orderId={order.id}
       remarks={order.remarks}
+      clientWorkOrderNumber={order.clientWorkOrderNumber}
+      productionDate={order.productionDate ? formatDateOnly(order.productionDate) : ""}
+      dispatchDate={order.dispatchDate ? formatDateOnly(order.dispatchDate) : ""}
       priority={order.priority}
       notice={
         hasEntries

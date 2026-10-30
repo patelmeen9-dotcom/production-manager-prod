@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, Clock, Factory, Package, TrendingUp } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, Factory, Package, Truck, TrendingUp } from "lucide-react";
 import { requireTenantContext } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { loadPlantScope } from "@/lib/plants/access";
@@ -76,16 +76,21 @@ function KpiCard(props: {
   );
 }
 
-function toLiveRow(order: OrderTowerState): LiveOrderRow {
+function toLiveRow(
+  order: OrderTowerState,
+  extras?: { clientWorkOrderNumber?: string | null },
+): LiveOrderRow {
   return {
     id: order.orderId,
     orderNumber: order.orderNumber,
+    clientWorkOrderNumber: extras?.clientWorkOrderNumber ?? null,
     clientName: order.clientName,
     productName: order.lines.map((line) => line.productName).join(", ") || "—",
     plantName: order.plantName,
     quantity: order.quantity,
     completedQuantity: order.completedQuantity,
     remainingQuantity: order.remainingQuantity,
+    dispatchedQuantity: order.dispatchedQuantity,
     progressPercent: order.progressPercent,
     currentStageName: order.currentProcessName,
     dueDate: formatDateOnly(order.dueDate),
@@ -180,6 +185,7 @@ export default async function DashboardPage({
       select: {
         id: true,
         orderNumber: true,
+        clientWorkOrderNumber: true,
         quantity: true,
         orderDate: true,
         effectiveStartDate: true,
@@ -238,8 +244,9 @@ export default async function DashboardPage({
 
   const settings = parseOrganizationSettings(organization?.settings);
   const orderIds = orders.map((order) => order.id);
+  const clientWoByOrderId = new Map(orders.map((order) => [order.id, order.clientWorkOrderNumber]));
 
-  const [entries, masterProcesses] = await Promise.all([
+  const [entries, masterProcesses, dispatchTotals] = await Promise.all([
     orderIds.length === 0
       ? Promise.resolve([])
       : prisma.productionEntry.findMany({
@@ -256,7 +263,17 @@ export default async function DashboardPage({
       where: { organizationId: context.organizationId },
       select: { id: true, unitsPerDay: true },
     }),
+    orderIds.length === 0
+      ? Promise.resolve([])
+      : prisma.dispatchEntry.groupBy({
+          by: ["productionOrderId"],
+          where: { organizationId: context.organizationId, productionOrderId: { in: orderIds } },
+          _sum: { quantity: true },
+        }),
   ]);
+  const dispatchedByOrder = new Map(
+    dispatchTotals.map((row) => [row.productionOrderId, row._sum.quantity ?? 0]),
+  );
 
   const unitsByProcessId = new Map(masterProcesses.map((process) => [process.id, process.unitsPerDay]));
   const entriesByOrder = new Map<string, DatedEntry[]>();
@@ -311,6 +328,7 @@ export default async function DashboardPage({
         })),
       })),
       entries: entriesByOrder.get(order.id) ?? [],
+      dispatchedQuantity: dispatchedByOrder.get(order.id) ?? 0,
     });
   });
 
@@ -405,7 +423,9 @@ export default async function DashboardPage({
       return a.dueDate.getTime() - b.dueDate.getTime();
     });
 
-  const liveRows = live.map(toLiveRow);
+  const liveRows = live.map((order) =>
+    toLiveRow(order, { clientWorkOrderNumber: clientWoByOrderId.get(order.orderId) }),
+  );
 
   function kpiHref(group: StatusGroup) {
     const next = statusGroup === group ? null : group === "total" ? null : group;
@@ -488,6 +508,16 @@ export default async function DashboardPage({
           icon={<CheckCircle2 size={15} />}
           href={kpiHref("completed")}
           active={statusGroup === "completed"}
+          viewAllHref="/orders"
+        />
+        <KpiCard
+          label="Dispatched"
+          value={kpiCounts.dispatched}
+          sub="finished goods shipped"
+          tone="good"
+          icon={<Truck size={15} />}
+          href={kpiHref("dispatched")}
+          active={statusGroup === "dispatched"}
           viewAllHref="/orders"
         />
       </section>
@@ -649,6 +679,7 @@ export default async function DashboardPage({
               <thead className="border-b border-line text-[10.5px] uppercase tracking-wide text-ink-soft">
                 <tr>
                   <th className="px-3 py-2 font-semibold">Order</th>
+                  <th className="px-3 py-2 font-semibold">Client WO</th>
                   <th className="px-3 py-2 font-semibold">Client</th>
                   <th className="px-3 py-2 font-semibold">Qty</th>
                   <th className="px-3 py-2 font-semibold">Prod %</th>
@@ -666,6 +697,9 @@ export default async function DashboardPage({
                       <Link className="font-mono font-semibold text-accent hover:underline" href={`/orders/${order.orderId}`}>
                         {order.orderNumber}
                       </Link>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-ink-soft">
+                      {clientWoByOrderId.get(order.orderId) || "—"}
                     </td>
                     <td className="px-3 py-2 text-ink">{order.clientName}</td>
                     <td className="px-3 py-2 font-mono text-ink-soft">{order.quantity}</td>

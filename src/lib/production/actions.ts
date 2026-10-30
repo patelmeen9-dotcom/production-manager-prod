@@ -10,6 +10,7 @@ import { parseDateOnly } from "@/lib/orders/date-rules";
 import { evaluateMaterialUsage } from "@/lib/orders/materials";
 import { requireGrantedPlant } from "@/lib/plants/access";
 import { requireProductionRecorder } from "@/lib/production/auth";
+import { assertValidDispatch, buildDispatchMeta } from "@/lib/production/dispatch";
 import { assertValidProductionEntry } from "@/lib/production/validate";
 import { evaluateOrderLines, scopeProcessesToLine } from "@/lib/production/evaluate-lines";
 import { parseOrganizationSettings } from "@/lib/organization-settings";
@@ -21,7 +22,7 @@ import { z } from "zod";
 
 const stageOrActivityEntrySchema = z.object({
   productionOrderId: z.string().min(1, "Order is required."),
-  stageOrActivity: z.string().min(1, "Select a stage or special activity."),
+  stageOrActivity: z.string().min(1, "Select a stage, special activity, or dispatch."),
   entryDate: z.string().min(1, "Date is required."),
   quantity: z.coerce.number().int().positive("Quantity must be greater than zero."),
   remarks: z.string().trim().max(500).optional().or(z.literal("")),
@@ -79,8 +80,8 @@ export async function createProductionEntryAction(_prev: FormState, formData: Fo
     }
 
     const [kind, selectedId] = parsed.data.stageOrActivity.split(":");
-    if ((kind !== "process" && kind !== "activity") || !selectedId) {
-      return { error: "Select a valid stage or special activity." };
+    if ((kind !== "process" && kind !== "activity" && kind !== "dispatch") || !selectedId) {
+      return { error: "Select a valid stage, special activity, or dispatch." };
     }
 
     const order = await prisma.productionOrder.findFirst({
@@ -100,7 +101,85 @@ export async function createProductionEntryAction(_prev: FormState, formData: Fo
     await requireGrantedPlant(context, order.plantId);
     const entryDate = parseDateOnly(parsed.data.entryDate);
 
-    if (kind === "activity") {
+    if (kind === "dispatch") {
+      const [productionEntries, existingDispatches] = await Promise.all([
+        prisma.productionEntry.findMany({
+          where: { organizationId: context.organizationId, productionOrderId: order.id },
+          select: { orderProcessId: true, quantity: true },
+        }),
+        prisma.dispatchEntry.findMany({
+          where: { organizationId: context.organizationId, productionOrderId: order.id },
+          select: { quantity: true, productionOrderLineId: true },
+        }),
+      ]);
+      const lines = order.lines.map((line) => ({
+        id: line.id,
+        quantity: line.quantity,
+        processes: order.processes
+          .filter((process) => process.productionOrderLineId === line.id)
+          .map((process) => ({
+            id: process.id,
+            sequence: process.sequence,
+            plannedQuantity: process.plannedQuantity,
+          })),
+      }));
+      const scope = selectedId === "order" ? ({ kind: "order" } as const) : ({ kind: "line", lineId: selectedId } as const);
+      try {
+        assertValidDispatch({
+          quantity: parsed.data.quantity,
+          lifecycleStatus: order.lifecycleStatus,
+          lines,
+          productionEntries,
+          existingDispatches,
+          scope,
+        });
+      } catch (error) {
+        if (error instanceof AppError) {
+          return { error: error.message };
+        }
+        throw error;
+      }
+
+      const created = await prisma.dispatchEntry.create({
+        data: {
+          organizationId: context.organizationId,
+          plantId: order.plantId,
+          productionOrderId: order.id,
+          productionOrderLineId: scope.kind === "line" ? scope.lineId : null,
+          entryDate,
+          quantity: parsed.data.quantity,
+          remarks: parsed.data.remarks || null,
+          createdByUserId: context.userId,
+        },
+      });
+      await writeAuditLog({
+        organizationId: context.organizationId,
+        userId: context.userId,
+        action: "CREATE",
+        entityType: "DispatchEntry",
+        entityId: created.id,
+        newValue: {
+          orderNumber: order.orderNumber,
+          productionOrderLineId: created.productionOrderLineId,
+          quantity: parsed.data.quantity,
+          entryDate: parsed.data.entryDate,
+        },
+      });
+      const remaining = buildDispatchMeta({
+        lines,
+        productionEntries,
+        existingDispatches: [
+          ...existingDispatches,
+          { quantity: parsed.data.quantity, productionOrderLineId: created.productionOrderLineId },
+        ],
+      }).orderRemaining;
+      successMessage =
+        remaining === 0
+          ? "Dispatch recorded. This order is fully dispatched."
+          : scope.kind === "order"
+            ? "Dispatch recorded for the remaining order quantity."
+            : "Dispatch recorded for this product.";
+    } else if (kind === "activity") {
       if (!order.specialActivitiesRequested) {
         return { error: "This order does not have special activities requested." };
       }
